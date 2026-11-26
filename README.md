@@ -19,7 +19,8 @@ Kotlin + Rust + UniFFI，Android 原生，Jetpack Compose。
 
 ## 构建
 
-本地不可编译，所有构建通过 GitHub Actions 完成。见 `.github/workflows/`。
+本地不可编译，所有构建通过 GitHub Actions 完成。CI 搭建中（T-002e），
+完成后 workflow 配置见 `.github/workflows/`。
 
 ## 许可
 
