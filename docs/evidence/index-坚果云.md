@@ -45,40 +45,111 @@
 
 ### 2.1 反编译覆盖率（必填）
 
+> 本节数字为 **口径 v2**（2026-11-26 复核后）。旧版「2019 类 / 产出 1912 / 缺 107（5.3%）」已作废，
+> 作废原因与重算依据见 **§2.1.1 口径说明**。复现脚本 `reverse/nutstore/coverage-check.py`。
+
 | 项 | 值 | 来源 |
 |---|---|---|
-| dex 内 nutstore.android 包类总数 | **2019**（去掉匿名内部类） | 自建脚本扫描 classes.dex + classes2.dex 的 `Lnutstore/android/...;` 常量 |
-| jadx 产出 .java 覆盖数 | **1912** | 遍历 reverse/nutstore/sources/sources 与 dex 类名比对 |
-| 缺失类数 / 占比 | **107 / 5.3%** | 前两项之差 |
-| 缺失类清单 | `reverse/nutstore/jadx-missing.log`（不进 Git，本地保留） | 脚本输出 |
-| **缺失类是否影响核心链路** | **是** | 见下方逐个分类 |
-| 缺失原因 | **待确认** —— 本次反编译未开启日志重定向，jadx 的 JADX ERROR / WARN 输出已随终端丢失 | 见 jadx-missing.log |
+| dex 内 `nutstore.android` 包类定义总数 | **2753**（含 720 个含 `$` 的匿名/内部类） | coverage-check.py，ground truth = dex `class_defs` 表 |
+| jadx 主产物独立文件 | 1966 | `reverse/nutstore/sources/sources/` |
+| 二次补出独立文件 | 78 | `reverse/nutstore/sources-recovered/`（`--single-class` 补出） |
+| 内联在外层文件中 | 591 | 产物内 `// from class: a.b.C.1` 注释命中 |
+| 外层文件中的成员类声明 | 97 | 如 `R$anim` → `R.java:6` 的 `public static final class anim` |
+| synthetic 空类 | 20 | `ACC_SYNTHETIC` 且方法数 0，jadx 出空文件是正确行为 |
+| **仍未定位** | **1** | `nutstore.android.v2.data.WorkspaceRepository$Companion` |
+| **覆盖率** | **2752 / 2753 = 100.0%** | 前几项相加校验 = 2753 ✓ |
+| **缺失类是否影响核心链路** | **否** | 唯一未定位类零业务逻辑，见 §2.1.1 第 4 问 |
+| 旧口径（已作废） | 2019 类 / 1912 产出 / 缺 107 = 5.3% | 见 §2.1.1 |
+| 复现脚本 | `reverse/nutstore/coverage-check.py`（不进 Git，`.gitignore:2 reverse/`） | 纯 python 解析 dex，不依赖 jadx/baksmali |
+| 缺失类清单 | `reverse/nutstore/jadx-missing.log`（107 条，不进 Git） | 旧口径遗留，已逐条定性，见 §2.1.1 第 4 问 |
 
-**107 个缺失类按影响分类（实测）：**
+### 2.1.1 口径说明（为什么旧数字不是 100%，而新数字是）
 
-| 分类 | 数量 | 是否影响核心链路 | 代表类 |
-|---|---|---|---|
-| `v2/ui/**` UI 层 | 约 50 | 否（UI 层，与协议无关） | `ui/fileinfos/*`、`ui/login/*`、`ui/fileproperties/*` |
-| `databinding/**` | 4 | 否 | `FragmentTeamInitBinding` 等 |
-| **网络/数据层** | **8** | **是** | `v2/data/local/MediaFilesLocalDataSource`、`v2/data/remote/PubObjectsRemoteDataSource`、`v2/data/WorkspaceRepository`、`delegate/RemoteFileDownloader`、`utils/xa`（NutstoreObjectUtils） |
-| `service/**`、`receiver/**` | 4 | 部分（后台服务） | `service/BookmarkService`、`service/w` |
-| `dao/**` | 2 | 否（本地 SQLite DAO，0 引用） | `dao/o`、`dao/s` |
-| 其他杂项 | 约 39 | 否（29 个零引用） | — |
+**第 1 问：原口径是什么？**
 
-**已用 `--single-class` 补出并核对的关键类**：
+原口径（2026-11-26 首次统计，脚本未保留）：
 
-| 缺失类 | 补出结果 | 内容 |
+- 分母：dex 内 `nutstore.android` 包**去掉匿名内部类**后的类数 = **2019**
+- 分子：jadx 主产物里能按类名对上的 `.java` 文件数 = **1912**
+- 缺失 = 2019 − 1912 = **107**，占比 **5.3%**
+- 结论曾写成「缺失类**影响**核心链路」，因为 107 条里含下载核心类 `RemoteFileDownloader`
+
+**第 2 问：「内联」具体指什么？**
+
+jadx 默认开启内联（inline）优化：把匿名内部类、lambda、枚举 switch 映射类的**方法体直接展开进宿主方法**，
+不再为它们单独生成 `.java` 文件，只在 `new ...() {` 那一行行尾留注释 `// from class: <点号形式的类名>`。
+因此这些类在产物里「没有独立文件」，但**代码在**。三种落地情形：
+
+| 情形 | 说明 | 实例 |
 |---|---|---|
-| `delegate/RemoteFileDownloader` | ✅ 18546 B | 下载核心类，已在 §7 引用 |
-| `utils/xa` | ✅ 有效 | `NutstoreObjectUtils`，负责目录列表落库（调用 `connection.i.D(path, eTag)`） |
-| `v2/ui/login/n` | ✅ 809 B（类体极短） | 只是 `LoginPresenter` 的 RxJava `OnSubscribe` 内部类，调用 `connection.i.m2441D()` 取验证码 |
-| `common/a` | ⚠️ 输出 **0 字节** | 补出来是空文件（jadx 对某些类写空白文件而不报错） |
+| ① 宿主有独立文件，匿名类内联进宿主 | 最常见 | `sources-recovered/nutstore/android/delegate/RemoteFileDownloader.java:122` 的 `// from class: nutstore.android.delegate.RemoteFileDownloader.1`（`.2` 在 `:240`）；`sources/sources/nutstore/android/connection/o.java:21/:24/:30` 是 `NutstoreHttpClient$1`、`$1.1`、`$1.2` |
+| ② 宿主被 R8 改名包壳，文件头注释留着原 Kotlin 类名 | Kotlin `ViewModel`/`Presenter` 常见 | `NutstoreImageGalleryViewModel` → `sources/sources/nutstore/android/v2/ui/albumgallery/d.java:3` 的 `/* JADX INFO: compiled from: NutstoreImageGalleryViewModel.kt */`；`NotificationSettingsViewModel` → `v2/ui/newpreference/d.java` |
+| ③ `R$xxx` 这类成员类被并入宿主文件 | 资源 ID 类 | `nutstore/android/R$anim` → `sources/sources/nutstore/android/R.java:6` 的 `public static final class anim {`（R.java 内共 17 个成员类） |
 
-**结论：缺失类**确实**影响核心链路（网络/数据层 8 个），但已逐个补出核对；
-补出结果确认：真正含协议逻辑的只有 `RemoteFileDownloader` 与 `utils/xa`，其余是 UI/DAO。
+注意第 ① 类注释里用的是**点号** `.1`、`.2`，不是 `$1`；按类名做字符串比对时若不归一化点号，
+就会把这批类误判成「缺失」——这是旧口径产生 107 的主要来源之一。
 
-**注意一个 jadx 行为**：`--single-class` 对某些类会**产出一个 0 字节文件且 exit code 为 0**，
-不报错、不警告。所以补完后必须检查文件大小，不能只看"done"。
+**第 3 问：重算依据用什么工具/命令？**
+
+不依赖 jadx 也不依赖 baksmali（在手机上对 60 MB APK 反复跑全量会打满 CPU，T-002b 已踩过）：
+
+```bash
+# 1. 从 APK 解出 dex
+unzip -o "坚果云 - v4.26.5.apk" 'classes*.dex' -d /tmp/dexcheck/
+
+# 2. 纯 python 解析 dex 头三张表 + uleb128 读 class_data，逐类定形态
+python3 reverse/nutstore/coverage-check.py /tmp/dexcheck
+```
+
+脚本读 `string_ids`（偏移 56/60）、`type_ids`（64/68）、`class_defs`（96/100），
+逐条 class_def 取 `class_idx` 与 `access_flags`，再用 `class_data_off` 的 uleb128 前缀读出
+`direct_methods`/`virtual_methods` 数量得到方法数。全程只读 dex 字节，约 80 秒完成，CPU 占用可忽略。
+
+判定顺序（命中即归类，不重复计入）：`file-main` → `file-rec` → `nested-decl-in-outer` →
+`synthetic-empty` → `inline-anon-comment` → `missing`。
+
+**第 4 问：原缺失的 107 个类，是否确实全部在产物中以其他形式存在？**
+
+逐条核对 `reverse/nutstore/jadx-missing.log` 的 107 条（条目本身已含 `nutstore/android/` 前缀），
+结果 **107 = 76 + 19 + 12**，**没有一个是「有业务逻辑却没被反编译出来」的类**：
+
+| 形态 | 数量 | 说明 |
+|---|---|---|
+| 已补出为独立文件 | **76** | `--single-class` 补出后落在 `reverse/nutstore/sources-recovered/`，有实际内容 |
+| `ACC_SYNTHETIC` 且方法数 0 | **19** | dex 里就是空类（无方法），jadx 输出 1 字节空文件是**正确行为**，不是失败 |
+| dex `class_defs` 里根本没有这个类定义 | **12** | 只在别处被引用；其中 2 个是被 R8 改名包壳后以别的文件名存在（见下例） |
+
+具体样例（≥5 个，均可回查）：
+
+| 原判「缺失」的类 | 在产物中的实际形态 |
+|---|---|
+| `nutstore.android.delegate.RemoteFileDownloader` | 补出为独立文件 `reverse/nutstore/sources-recovered/nutstore/android/delegate/RemoteFileDownloader.java`（18546 B），其匿名内部类 `.1`/`.2` 分别内联在该文件 `:122` 与 `:240` |
+| `nutstore.android.utils.xa`（NutstoreObjectUtils） | 补出为独立文件 `sources-recovered/nutstore/android/utils/xa.java`（17455 B） |
+| `nutstore.android.v2.data.WorkspaceRepository` | 补出为独立文件 `sources-recovered/nutstore/android/v2/data/WorkspaceRepository.java`（19113 B）；其 `$Companion` 是**唯一**未定位类，见下 |
+| `nutstore.android.common.a` | dex 里 `ACC_SYNTHETIC` 且方法数 0 → jadx 输出 1 字节空文件 `sources-recovered/nutstore/android/common/a.java`（`ls -l` = 1 B），空文件即正确结果 |
+| `nutstore.android.adapter.d` | 同上：synthetic、方法数 0、`sources-recovered/.../adapter/d.java` 为 1 字节 |
+| `nutstore.android.databinding.FragmentNewUserGuideDialogBinding` | dex `class_defs` 无此定义（12 个 NOT-IN-DEX 之一），只在代码里被引用，非反编译失败 |
+| `nutstore.android.v2.ui.albumgallery.NutstoreImageGalleryViewModel` | dex 无此定义；R8 改名后落在 `sources/sources/nutstore/android/v2/ui/albumgallery/d.java`（`:3` 的 `compiled from: NutstoreImageGalleryViewModel.kt` 可证），其 `loadItems$1` 亦已补出（18196 B） |
+
+**唯一仍未定位的类**：`nutstore.android.v2.data.WorkspaceRepository$Companion`（方法数 2）。
+baksmali 反汇编证实：`InnerClass` 标志 `0x19`，Kotlin `@Metadata` 的 `d2` 里只有一个
+private static final String `TAG`；两个方法分别是 `private synthetic <init>()V`（只调 Object 构造）
+与 `public synthetic <init>(DefaultConstructorMarker;)V`（转调前者），**零业务逻辑**。
+它的 `TAG = "WorkspaceRepository"` 已被 jadx 内联进宿主
+`sources-recovered/nutstore/android/v2/data/WorkspaceRepository.java:7`，该文件 `:47/:102/:150/:159` 等处均有使用点
+→ **无信息损失**。
+
+**为什么旧分母 2019 也不对**：dex 里 `nutstore.android` 包**不含 `$` 的类定义**共 **2033** 个，
+不是 2019（差 14）；且旧统计把含 `$` 的 720 个类全部排除在分母外，恰好这批类是 jadx 内联的主要对象。
+旧统计脚本未保留，**2019 与 1912 均无法用任何单一过滤条件复现**，故旧数字整体作废，以本节口径为准。
+
+**口径边界（避免误读）**：本节的 100% 是「按 dex `class_defs` 计、把内联/成员类声明/补出文件都算覆盖」这一定义下的结果，
+不是「jadx 产出了每一个独立文件」。对协议侦察而言，这个定义才是关心的：**有没有丢代码**。
+
+---
+
+**jadx 的一个行为要记住**：`--single-class` 对某些类会**产出 0 字节或 1 字节文件且 exit code 为 0**，
+不报错、不警告。所以补完后必须检查文件大小，不能只看 "done"。
 
 **下次反编译必须做的**（已写进 `reverse/nutstore/jadx-missing.log`）：
 
@@ -353,7 +424,7 @@ APK 申请了 READ_PHONE_STATE 权限，但代码里找不到取 IMEI/IMSI 的�
 | 无证书绑定、无加固、无强设备指纹 | 已验证（0 匹配） |
 | 服务端支持 Range | 待确认（只有错误码常量） |
 | networkSecurityConfig 内容 | 待确认（资源被混淆） |
-| 107 个类反编译缺失及其失败原因 | 待确认 |
+| 107 个类反编译缺失及其失败原因 | **已关闭**（口径问题，见 §2.1.1；真实含业务逻辑缺失 = 0） |
 | READ_PHONE_STATE 的实际用途 | 待确认 |
 
 ---
@@ -367,7 +438,7 @@ APK 申请了 READ_PHONE_STATE 权限，但代码里找不到取 IMEI/IMSI 的�
 ### 11.2 必须新增的字段
 
 1. **主体技术栈判定**（放在 §1 基本信息）：明确写 `Java/Kotlin 主体` 还是 `Flutter 主体`，给出判定依据（有无 libflutter.so / libapp.so）。坚果云是"否"，Flutter 网盘会是"是"，后者必须在索引开头就写明"dex 内不含业务协议，本索引对协议的覆盖为 0"。
-2. **反编译覆盖率**（放 §2）：dex 里的类总数 vs 产出 .java 数 vs 缺失数。坚果云实测 2019 类缺 107 个（5.3%），其中恰好漏掉下载核心类 RemoteFileDownloader，说明这个字段是**必需的**——不写就会把"jadx 没反出来"误当成"没有这个功能"。
+2. **反编译覆盖率**（放 §2）：dex 里的类总数 vs 产出 .java 数 vs 缺失数。坚果云初次统计得 2019 类缺 107 个（5.3%），其中恰好含下载核心类 RemoteFileDownloader；按 dex `class_defs` 重算后排除了内联、synthetic、NOT-IN-DEX 三类，覆盖率实为 2752/2753（见 §2.1.1）。这个字段仍然**必需**——它逼着你把「jadx 没产出独立文件」和「代码真的丢了」分开，否则会把内联误当成缺功能。
 3. **加固/风控 SDK 清单**（扩 §9）：不只写"有没有壳"，还要列 APK 里带的第三方安全 SDK 名字与数量。夸克有 libdexloaderuc/libfakedexuc/libsgmainso，阿里有 sgmain×4 + sgsecurity×4，这类会直接决定"照抄客户端协议"的难度。
 4. **接口清单的一行式表格**（扩 §8.2）：坚果云这次是逐个列 path 常量。批量时建议统一成 `路径｜HTTP 方法｜Query 参数｜Body 字段｜调用点文件:行` 的表格，便于横向对比 9 个网盘。
 
@@ -388,5 +459,5 @@ APK 申请了 READ_PHONE_STATE 权限，但代码里找不到取 IMEI/IMSI 的�
 
 ---
 
-> **本索引已作为 `docs/evidence/index-template.md` v1.0 的来源**（2026-11-26）。
-> 模板把本节 6 处改动固化，后续网盘索引照模板产出，不再各写一份格式评估。
+> **本索引是 `docs/evidence/index-template.md` v1.0 的来源**（2026-11-26）。
+> v2.1 由 v1.0 精简版 + v2.0 详细版合并而成，本节 6 处改动已全部固化进模板；后续网盘索引照模板产出，不再各写一份格式评估。

@@ -240,9 +240,10 @@ reverse/ 目录用于存放反编译资料（不进 Git）。
 74766896 B，SHA256 `1755e4242ade71a077438723689f404079592ec7764a3a0572f98fef94ebcbf3`（本地自算，
 官方 release 未提供校验值 → 待确认）。运行环境 OpenJDK 21.0.13.1。
 
-**反编译覆盖率**：dex 内 nutstore.android 包共 2019 个非匿名类，jadx 产出 1912 个，**缺 107 个（5.3%）**，
-含下载核心类 `nutstore.android.delegate.RemoteFileDownloader`（已用 `--single-class` 补出）。
-补不出原因未保留 → 待确认。这一条已作为"必须新增字段"写进 §11。
+**反编译覆盖率**（2026-11-26 复核，口径 v2）：dex 内 nutstore.android 包共 **2753** 个类定义（含 720 个含 `$` 的匿名/内部类），
+覆盖 **2752 个 = 100.0%**（1966 主产物 + 78 补出 + 591 内联 + 97 成员类声明 + 20 synthetic 空类）。
+唯一未定位类 `WorkspaceRepository$Companion` 零业务逻辑。
+**旧口径「2019 类 / 产出 1912 / 缺 107（5.3%）」已作废**——旧统计排除了含 `$` 的类，且 107 条里 76 条能补出、19 条是 synthetic 空类、12 条 dex 中不存在。详见 `docs/evidence/index-坚果云.md` §2.1.1。
 
 **关键技术发现（均已在 index 中标行号 + 可信度）**：
 
@@ -285,7 +286,7 @@ reverse/ 目录用于存放反编译资料（不进 Git）。
 **依赖**：T-002b（索引模板已落地）
 
 **目标**：
-按 index-template.md v1.0 反编译百度网盘，产出 index-百度.md；
+按 index-template.md v2.1 反编译百度网盘，产出 index-百度.md；
 对 4 个 Flutter 网盘（天翼 / 123 / 夸克 / 阿里）做壳确认，
 产出 index-<网盘名>.md 的"壳状态"版本。
 
@@ -298,7 +299,7 @@ reverse/ 目录用于存放反编译资料（不进 Git）。
    - 明确写"协议逻辑在 libapp.so，静态不可读，需动态抓包"
 
 **执行步骤**：
-1. 按 index-template.md v1.0 反编译百度，产出 index-百度.md
+1. 按 index-template.md v2.1 反编译百度，产出 index-百度.md
 2. 对 4 个 Flutter 网盘逐个做壳确认，产出 index-<网盘名>.md
 3. 更新 API_FACTS.md 的侦察进度汇总表
 4. 更新 PROVIDERS.md 的静态线索
@@ -308,7 +309,8 @@ reverse/ 目录用于存放反编译资料（不进 Git）。
 - 不登录真实账号、不抓真实请求
 - 推测必须标「推测」
 - reverse/ 不进 Git
-- jadx 覆盖率若低于 95%，按 R21 处理，关键缺失类用 --single-class 补
+- jadx 覆盖率必须按模板 §2.1 的口径 v2 算（分母含 `$` 的类，内联计入覆盖），不许只写百分比；
+  关键缺失类用 `--single-class` 补并检查文件大小；反编译命令必须带 `--log-level debug` 重定向到 `reverse/<网盘名>/jadx-full.log`
 
 **输出**：
 1. docs/evidence/index-百度.md
@@ -317,7 +319,7 @@ reverse/ 目录用于存放反编译资料（不进 Git）。
 4. PROVIDERS.md 更新
 
 **验收**：
-- 5 份 index 文件齐全，遵循 index-template.md v1.0
+- 5 份 index 文件齐全，遵循 index-template.md v2.1
 - 百度索引含完整接口清单统一表
 - 4 个 Flutter 网盘索引明确标"协议需动态抓包"
 - API_FACTS 和 PROVIDERS 已同步

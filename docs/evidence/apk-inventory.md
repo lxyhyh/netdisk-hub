@@ -155,7 +155,7 @@ base.apk 的 compileSdkVersion=35，targetSdkVersion=35，minSdkVersion=23。
 **已反编译的网盘**：
 
 - 坚果云 `nutstore.android` v4.26.5 → `reverse/nutstore/sources/`（8006 个 .java，约 67 MB）
-  - 覆盖率：nutstore.android 包 2019 个类，产出 1912 个，**缺 107 个（5.3%）**
+  - 覆盖率：nutstore.android 包 2753 个类定义，覆盖 2752 个 = **100.0%**（2026-11-26 复核，口径 v2；旧的「2019/1912/缺 107」为统计口径错误，见 `index-坚果云.md` §2.1.1）
   - 工具：jadx 1.5.7（见 `docs/evidence/tooling.md`）
   - 加固：无。证书绑定：无。字符串 XOR 混淆：155 个解密器 / 4804 处调用
 

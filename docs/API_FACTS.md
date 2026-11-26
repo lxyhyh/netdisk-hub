@@ -205,7 +205,7 @@
 
 - 服务端是否支持 `Range` 断点续传？（客户端只有错误码常量 `RangeNotSatisfied`，无任何代码设置 Range 头）
 - `networkSecurityConfig`（`@0x7f110003`）的实际内容？（资源被混淆，zip 里查不到明文 xml）
-- jadx 未产出的 107 个类（占 5.3%）里是否还有别的关键类？（已补出下载核心类 `RemoteFileDownloader`）
+- ~~jadx 未产出的 107 个类里是否还有别的关键类？~~ **已关闭**：按 dex `class_defs` 复核，覆盖率 2752/2753（100.0%），107 条 = 76 条已补出 + 19 个 synthetic 空类 + 12 个 dex 中不存在的类，无含业务逻辑的真实缺失（见 `docs/evidence/index-坚果云.md` §2.1.1）
 - token 的服务端有效期？
 - 上传是否真无分片？（`checkBlock` 系列五个接口在 `NutstoreApi.java` 有声明但全仓无调用点）
 - 服务端是否有频率限制？（客户端无限速代码）
