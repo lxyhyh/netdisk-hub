@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 继承平台主题，不引入 appcompat / material 依赖（Compose 自行管理界面外观） -->
+    <style name="Theme.NetdiskHub" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

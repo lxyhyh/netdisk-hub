@@ -1,0 +1,25 @@
+# 版本策略：
+# - Kotlin 版本统一为 2.4.21，composeCompiler 与 kotlinBuiltInKgp 必须保持一致
+# - AGP 9.x 内置 Kotlin（android.builtInKotlin 默认 true），不应用 org.jetbrains.kotlin.android
+# - AGP 9.3.1 的 POM 对 kotlin-gradle-plugin 有 2.2.10 运行时依赖（AGP 9.0–9.5 的最低 KGP 版本）
+#   官方文档：顶层 plugins 块声明了其它 Kotlin 插件（如 org.jetbrains.kotlin.plugin.compose）
+#   且版本 ≥2.2.10 时，Gradle 会自动把 KGP 对齐到该版本 → 声明 2.4.21 即内置 KGP 生效 2.4.21
+# - composeBom 2026.09.00 解析为 ui 1.12.1（minCompileSdk=37, minor=0）/ material3 1.4.0
+#   2026.11.01 会解析为 ui 1.13.0（要求 compileSdk 37.1），故不用
+
+[versions]
+agp = "9.3.1"
+kotlinBuiltInKgp = "2.4.21"
+composeCompiler = "2.4.21"
+composeBom = "2026.09.00"
+activityCompose = "1.13.0"
+
+[libraries]
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
+compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
+compose-ui = { module = "androidx.compose.ui:ui" }
+compose-material3 = { module = "androidx.compose.material3:material3" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "composeCompiler" }
