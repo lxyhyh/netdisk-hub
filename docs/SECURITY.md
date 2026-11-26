@@ -56,3 +56,21 @@
 登录必须是 APP 内原生登录（详见 PROJECT_CHARTER.md「登录方式」）。
 禁止 OAuth、WebView 抓 cookie、手动粘贴 token、网页端会话复用。
 这类方案不仅功能不合格，也会把凭据暴露在不可控的中间层。
+
+## 6. 公开仓库 CI 安全
+
+仓库为公开仓库，Actions 日志和 artifact 默认对所有人可见。
+
+硬约束：
+1. CI 日志中不得出现真实 token / cookie / 账号 / 手机号
+2. 测试数据必须是脱敏样本，不得含真实用户信息
+3. 必须使用真实凭据的 step，凭据走 GitHub Secrets，且该 step 日志显式屏蔽输出
+4. artifact 上传前检查：APK 不得打包真实凭据，测试报告不得含敏感字符串
+5. docs/evidence/ 下的索引文件：涉及密钥时只写来源定位，不写密钥值本身
+
+CI workflow 审查清单（T-002e 搭建时逐条核对）：
+- [ ] 所有 secrets 通过 `${{ secrets.XXX }}` 引用，无硬编码
+- [ ] 日志中无 echo 敏感变量
+- [ ] artifact 上传前有脱敏检查步骤
+- [ ] 测试 mock 数据已脱敏
+- [ ] commit message 无"破解 / 绕过 / 封堵"类描述

@@ -159,3 +159,27 @@ NDK r30 需在 build.gradle.kts 中显式锁定，不依赖 AGP 默认值。
 | lint/typecheck/test | 全绿 | 全绿 | 全绿 |
 
 **100% 变异覆盖率不是阶段 1 硬门禁。**
+
+## 9. CI-first 开发约束
+
+开发机不具备本地编译条件，所有编译、构建、测试、打包必须在 GitHub Actions 完成。
+本地只做：代码编写、静态分析、Git 操作、文档编辑。
+
+影响：
+- 任何需要验证编译的任务（包括 T-003 UniFFI 集成验证、T-004 工具兼容性复核、
+  所有测试、CRAP 门禁、变异测试），都在 CI 上执行
+- 本地不可完成的验证，不得写成"已本地验证"
+- agent 每完成一批改动即 push，等 CI 反馈，不假设改动正确
+
+CI 基础设施要求：
+- GitHub Actions workflow 至少覆盖：Kotlin 编译、Rust 交叉编译、UniFFI 绑定生成、
+  APK 打包、单元测试、CRAP 门禁、变异测试
+- Ubuntu runner 需安装：JDK 17、Android SDK（compileSdk 37 / Build Tools 36.0.0）、
+  NDK r30、Rust 1.100.0、cargo-ndk 4.1.2
+- workflow 分档：
+  - 日常 push：build + test
+  - PR / 手动触发：quality-gate（CRAP + 变异测试）
+  - 文档改动：paths 过滤，不触发 build
+- workflow 产物（APK / AAB / 测试报告 / CRAP 报告 / 变异报告）可下载
+
+CI 验证结果作为唯一编译验证依据。本地无法编译不得作为"跳过验证"的理由。

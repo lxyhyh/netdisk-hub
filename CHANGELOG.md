@@ -203,3 +203,39 @@
 
 - 覆盖率口径复核**先写口径说明再改数字**，不是直接把 5.3% 改成 100%；R21 的关闭有 76/19/12 三条可回查依据。
 - 模板合并后行数从 319 → 360，字节 11012 → 15238；v1.0 的「React Native / 混合」措辞未采纳（本项目 9 个样本只出现 Java/Kotlin、Flutter、NestedWeb 三类）。
+
+### CI-first + 公开仓库配置（2026-11-26）
+
+#### 新增
+
+- `README.md`：项目定位（个人自用 / 非官方客户端 / 不分发 APK）、技术栈、状态、构建说明（本地不可编译，走 GitHub Actions）、许可
+- `LICENSE`：MIT
+- `.github/workflows/` **尚未创建**（属 T-002e 范围），README 指向该目录为后续产物
+- `docs/TASKS.md` 新增 **T-002e GitHub Actions CI 基础设施搭建**任务卡（阶段1前置，优先级高于 T-003 / T-004）：
+  7 类 workflow（Kotlin 编译 / Rust 交叉编译 / UniFFI 绑定生成 / APK 打包 / 单元测试 / CRAP 门禁 / 变异测试）、
+  三分档触发策略（push 跑 build+test、PR/手动跑 quality-gate、docs 改动不触发）、6 条执行步骤、5 条约束、
+  3 项输出、6 项验收、5 条打回条件
+- `docs/ARCHITECTURE.md` 新增 **§9 CI-first 开发约束**：本地只做代码编写 / 静态分析 / Git / 文档；
+  编译构建测试打包全在 CI；CI 基础设施要求（runner 需装 JDK 17、Android SDK compileSdk 37 / Build Tools 36.0.0、
+  NDK r30、Rust 1.100.0、cargo-ndk 4.1.2）；CI 验证结果是唯一编译验证依据
+- `AGENTS.md` 新增 **第 10、11、12 条**：10 = 编译构建测试打包必须走 CI，不得声称"本地已编译通过"，每批改动即 push 等 CI；
+  11 = 涉及验证编译/测试/构建的验收项一律以 CI 结果为准，CI 未跑通不得标"已完成"；
+  12 = 公开仓库凭据纪律（不写真实 token/cookie/账号/手机号/密钥值，只写来源定位；commit message 不得写"破解/绕过/封堵"）
+- `docs/SECURITY.md` 新增 **§6 公开仓库 CI 安全**：5 条硬约束 + T-002e 搭建时逐条核对的 5 项 workflow 审查清单
+- `docs/RISKS.md` 新增 **R23–R26**：本地不可编译 CI 是唯一通道 / runner 环境与本地不一致 /
+  公开仓库加速接口封堵 / CI 日志与 artifact 泄露凭据
+
+#### 修改
+
+- `docs/TASKS.md` 编号索引表新增 T-002e 一行，排在 T-003 之前；编号规则补一条「阶段 1 前置任务中 T-002e 优先级最高，T-003 / T-004 均依赖它」
+- `docs/TASKS.md` **T-003** 目标栏追加"本任务所有验证在 GitHub Actions 完成，本地不编译"；约束栏从 1 条扩为 5 条（含"依赖 T-002e"）；
+  验收栏整段替换为"1-7 项全部在 CI 完成，每项有 CI 日志或 artifact 作为证据 / CI 全绿视为通过 / 不得以本地已验证替代"
+- `docs/TASKS.md` **T-004** 同构改写：目标栏追加 CI 说明，约束栏扩为 4 条（含"依赖 T-002e"），验收栏整段替换为 CI 证据要求 + 替代方案同样需 CI 验证
+- `docs/TASKS.md` 阶段列表与 T-005 的"进入阶段1"表述同步：先完成 T-002e，再并行 T-003 / T-004
+
+#### 说明
+
+- 仓库为**公开仓库**，从创建时即为 Public，不走 Private → Public 切换，因此不受私有仓库 Actions 2000 分钟限制。
+- `reverse/` 继续不进 Git（`.gitignore:2`）；`docs/evidence/` 进 Git 并公开，故索引文件中涉及密钥只写来源定位。
+- CI 日志、artifact、索引文件一律按公开内容对待，凭据纪律见 `docs/SECURITY.md` §6。
+- 本条目仅落本地文档；**GitHub 仓库创建与首次 push 由用户在本机执行**（需要 GitHub 账号与 remote 凭据），agent 不代跑。

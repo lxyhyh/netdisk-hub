@@ -1,6 +1,6 @@
 # 任务卡（TASKS）
 
-- 最后更新：2026-11-26（新增 T-002d：反编译百度 + Flutter 网盘壳确认）
+- 最后更新：2026-11-26（新增 T-002e：GitHub Actions CI 基础设施搭建；T-003 / T-004 改为 CI 验证）
 - 一个任务一节
 
 ## 编号索引
@@ -12,8 +12,9 @@
 | T-002b | 反编译 1 个 APK 跑通索引格式 | 0 | 已完成 |
 | T-002c | 各网盘登录流程侦察与可行性判定 | 0 | 待启动（依赖 T-002d） |
 | T-002d | 反编译百度 + Flutter 网盘壳确认 | 0 | 待启动 |
-| T-003 | UniFFI 构建链最小化集成验证 | 1 前置 | 待启动 |
-| T-004 | CRAP / 变异测试工具兼容性复核 | 1 前置 | 待启动 |
+| T-002e | GitHub Actions CI 基础设施搭建 | 1 前置 | 待启动 |
+| T-003 | UniFFI 构建链最小化集成验证 | 1 前置 | 待启动（依赖 T-002e） |
+| T-004 | CRAP / 变异测试工具兼容性复核 | 1 前置 | 待启动（依赖 T-002e） |
 | T-005 | Go/No-Go 决策与 MVP 网盘锁定 | 0 | 待启动 |
 
 **编号规则**
@@ -21,6 +22,7 @@
 - 阶段 0 侦察类任务用 `T-002` 前缀 + 字母后缀（a / b / c），表示"同一个大任务拆分出的子步骤"
 - 阶段 1 前置与正式任务用连续数字编号（T-003、T-004、T-005…）
 - 新增任务前必须先查本表，确认编号未被占用
+- 阶段 1 前置任务中 **T-002e（CI）优先级最高**，T-003 / T-004 均依赖它
 
 ---
 
@@ -396,6 +398,79 @@ reverse/ 目录用于存放反编译资料（不进 Git）。
 
 ---
 
+
+---
+
+## T-002e GitHub Actions CI 基础设施搭建
+
+**阶段**：阶段1前置
+**状态**：待启动
+**依赖**：GitHub 公开仓库已创建并首次 push 完成
+**优先级**：高于 T-003 / T-004
+
+### 目标
+
+搭建 GitHub Actions workflow，使后续所有编译、构建、测试、打包可在 CI 完成。
+本地不具备编译条件，CI 是唯一编译验证通道。
+
+### 必须覆盖的 workflow
+
+1. build：Kotlin 编译（AGP 9.3.1 / Gradle 9.7.0 / JDK 17 / compileSdk 37 / Build Tools 36.0.0）
+2. build：Rust 交叉编译（Rust 1.100.0 / cargo-ndk 4.1.2 / NDK r30 → Android ABI）
+3. build：UniFFI 绑定生成（uniffi-bindgen 0.32.2）
+4. build：APK / AAB 打包
+5. test：单元测试（JUnit 5.14.x + cargo test / nextest）
+6. quality-gate：CRAP 门禁（cargo-crap 0.10.0 + Kotlin 侧工具，T-004 定稿后接入）
+7. quality-gate：变异测试（pl.droidsonroids.pitest 0.3.0 + cargo-mutants 27.1.0，T-004 定稿后接入）
+
+### workflow 分档策略
+
+- build + test：push 触发，paths 过滤排除 docs/ 和 reverse/
+- quality-gate：PR 触发 + 手动 workflow_dispatch 触发，不随每次 push 跑
+- 文档改动：不触发 build
+
+### 执行步骤
+
+1. 建立 .github/workflows/ 目录
+2. 逐条建立 workflow 文件，先用空项目跑通最小构建
+3. 每个 workflow 记录：触发条件、runner 环境、依赖安装步骤、产物、失败重试策略
+4. 按 SECURITY.md 的 CI 审查清单逐条核对：secrets 引用、无 echo 敏感变量、artifact 脱敏检查
+5. workflow 产物上传为 artifact
+6. 在 docs/evidence/ci-setup.md 中记录：runner 环境、依赖版本、触发策略、产物说明
+
+### 约束
+
+- 只搭 CI 骨架，不写业务代码
+- workflow 必须可复现：从干净 runner 开始，不依赖本地缓存
+- 不得把真实 token / cookie / 账号写进 workflow 或 secrets 之外的地方
+- 不假设本地可编译，workflow 是唯一编译验证依据
+- 遵守 SECURITY.md 的「公开仓库 CI 安全」章节
+
+### 输出
+
+1. .github/workflows/ 下至少 3 个 workflow：build / test / quality-gate
+2. docs/evidence/ci-setup.md
+3. 一次空项目 CI 全绿记录（日志链接或截图）
+
+### 验收
+
+- 从干净 runner 触发 build workflow，APK 打包成功
+- test workflow 跑通单元测试
+- quality-gate workflow 可运行（具体工具等 T-004 定稿后接入）
+- 产物可从 Actions 页面下载
+- ci-setup.md 记录完整
+- SECURITY.md CI 审查清单 5 项全部核对通过
+
+### 打回条件
+
+- workflow 依赖本地缓存或本地文件
+- 声称 CI 跑通但无日志证据
+- 未记录 runner 环境和依赖安装步骤
+- CI 日志或 artifact 中出现真实凭据
+- commit message 出现"破解 / 绕过 / 封堵"类描述
+
+---
+
 ## T-003（阶段1前置）：UniFFI 构建链最小化集成验证
 
 - 阶段：1 前置
@@ -405,6 +480,8 @@ reverse/ 目录用于存放反编译资料（不进 Git）。
 ### 目标
 
 验证 UniFFI 0.32.2 + cargo-ndk 4.1.2 + Rust 1.100.0 + NDK r30 + Gradle 9.7.0 的完整协同。
+
+本任务所有验证在 GitHub Actions 完成，本地不编译。CI 运行结果作为唯一验证依据。
 
 ### 逐条验证
 
@@ -418,11 +495,17 @@ reverse/ 目录用于存放反编译资料（不进 Git）。
 
 ### 约束
 
-最小化工程，不做业务逻辑。
+- 最小化工程，不做业务逻辑。
+- 不得声称"本地已编译通过"
+- 每完成一步即 push，等 CI 结果再继续
+- CI 失败时先读日志定位，不盲目重试
+- 依赖 T-002e（CI 基础设施）完成
 
 ### 验收
 
-7 项全部通过，或明确记录失败项和回退方案。
+1-7 项验证全部在 CI 上完成，每项有 CI 运行日志或 artifact 作为证据。
+CI 全绿视为通过；CI 失败项需记录失败原因和回退方案。
+不得以"本地已验证"替代 CI 验证。
 
 ### 失败回退
 
@@ -440,6 +523,8 @@ reverse/ 目录用于存放反编译资料（不进 Git）。
 
 确认 CRAP 和变异测试工具在 AGP 9.3.1 + Gradle 9.7.0 下可用。
 
+本任务所有工具兼容性验证在 GitHub Actions 完成，本地不编译。CI 运行结果作为唯一验证依据。
+
 ### 逐条验证
 
 1. Kotlin 侧 CRAP 工具选型（ADR-001 候选）
@@ -450,11 +535,16 @@ reverse/ 目录用于存放反编译资料（不进 Git）。
 
 ### 约束
 
-只做工具验证，不写业务代码。
+- 只做工具验证，不写业务代码。
+- 不得声称"本地已验证兼容"
+- 依赖 T-002e 完成
+- 工具接入 CI 后必须实际跑一次，留下日志
 
 ### 验收
 
-五项全部有结论，不兼容项写 ADR 并给替代方案。
+1-5 项验证全部在 CI 上完成，每项有 CI 运行日志或 artifact 作为证据。
+不兼容项写 ADR 并给替代方案，替代方案同样需在 CI 验证。
+不得以"本地已验证"替代 CI 验证。
 
 ---
 
@@ -483,7 +573,7 @@ reverse/ 目录用于存放反编译资料（不进 Git）。
 
 **输出（待 T-002c 完成后执行）**：
 1. MVP 网盘锁定结论 + 理由
-2. 若 Go，进入阶段1（T-003 / T-004 可并行启动）
+2. 若 Go，进入阶段1（先完成 T-002e CI 基础设施，再并行启动 T-003 / T-004）
 3. 若 No-Go，给出补救方案
 
 **约束**：
@@ -502,8 +592,9 @@ reverse/ 目录用于存放反编译资料（不进 Git）。
 
 ## 阶段 1 前置
 
-- **T-003 UniFFI 构建链最小化集成验证（待启动）**
-- **T-004 CRAP / 变异测试工具兼容性复核（待启动）**
+- **T-002e GitHub Actions CI 基础设施搭建（待启动，优先级最高）**
+- **T-003 UniFFI 构建链最小化集成验证（待启动，依赖 T-002e）**
+- **T-004 CRAP / 变异测试工具兼容性复核（待启动，依赖 T-002e）**
 
 ## 阶段 1：Provider 抽象 + MockProvider
 
