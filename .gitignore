@@ -1,0 +1,16 @@
+# 反编译资料：放仓库内但不进 Git
+reverse/
+
+# 原始证据（APK 解包产物、抓包等）
+docs/evidence/raw/
+
+# 安装包与二进制产物
+*.apk
+*.xapk
+*.jar
+*.dex
+
+# 凭据
+*.cookie
+*.token
+.env
