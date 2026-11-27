@@ -1,6 +1,6 @@
 # 任务卡（TASKS）
 
-- 最后更新：2026-11-26（新增 T-002e：GitHub Actions CI 基础设施搭建；T-003 / T-004 改为 CI 验证）
+- 最后更新：2026-11-27（T-002e 第 1 轮完成归档：最小 Android 工程 + APK 打包已在 CI 跑通）
 - 一个任务一节
 
 ## 编号索引
@@ -12,7 +12,7 @@
 | T-002b | 反编译 1 个 APK 跑通索引格式 | 0 | 已完成 |
 | T-002c | 各网盘登录流程侦察与可行性判定 | 0 | 待启动（依赖 T-002d） |
 | T-002d | 反编译百度 + Flutter 网盘壳确认 | 0 | 待启动 |
-| T-002e | GitHub Actions CI 基础设施搭建 | 1 前置 | 待启动 |
+| T-002e | GitHub Actions CI 基础设施搭建 | 1 前置 | 进行中（第 1 轮完成，第 2/3 轮待启动） |
 | T-003 | UniFFI 构建链最小化集成验证 | 1 前置 | 待启动（依赖 T-002e） |
 | T-004 | CRAP / 变异测试工具兼容性复核 | 1 前置 | 待启动（依赖 T-002e） |
 | T-005 | Go/No-Go 决策与 MVP 网盘锁定 | 0 | 待启动 |
@@ -404,7 +404,7 @@ reverse/ 目录用于存放反编译资料（不进 Git）。
 ## T-002e GitHub Actions CI 基础设施搭建
 
 **阶段**：阶段1前置
-**状态**：待启动
+**状态**：进行中（第 1 轮完成，第 2/3 轮待启动）
 **依赖**：GitHub 公开仓库已创建并首次 push 完成
 **优先级**：高于 T-003 / T-004
 
@@ -468,6 +468,47 @@ reverse/ 目录用于存放反编译资料（不进 Git）。
 - 未记录 runner 环境和依赖安装步骤
 - CI 日志或 artifact 中出现真实凭据
 - commit message 出现"破解 / 绕过 / 封堵"类描述
+
+### 第 1 轮完成情况（最小 Android 工程 + APK 打包）
+
+**状态**：已完成（2026-11-27 归档）
+
+| 项 | 实测值 |
+|---|---|
+| commit | `0773aad65d9777451c896c156f082bb15a6ac8c0` |
+| commit message | `build: 最小 Android 工程骨架 + 第 1 轮 CI（assembleDebug）` |
+| CI 运行 | https://github.com/lxyhyh/netdisk-hub/actions/runs/45863557547 |
+| 运行 ID / workflow | `45863557547` / `build` |
+| 结果 | **success**（触发 16:58:03Z → 完成 17:00:32Z，总 2m 29s，构建 1m 39s） |
+| APK artifact | `app-debug-apk`（Artifact ID `15138789375`，zip 10204286 B，解压后 29209031 B） |
+| APK SHA256 | `1038561f0ee8302b47006dd34edc0cac71762c56a0196a0713fc7c7312fd0928` |
+| APK 元数据 | `com.netdiskhub.app` / versionCode 1 / 0.1.0 / compileSdk 37 / minSdk 31 / targetSdk 37 |
+
+**本轮新增的工程文件（11 个）**：`.gitignore`（追加构建产物规则）、`settings.gradle.kts`、
+`gradle.properties`、`gradle/libs.versions.toml`、`build.gradle.kts`、`app/build.gradle.kts`、
+`app/src/main/AndroidManifest.xml`、`app/src/main/kotlin/com/netdiskhub/app/MainActivity.kt`、
+`app/src/main/res/values/strings.xml`、`app/src/main/res/values/themes.xml`、
+`.github/workflows/build.yml`。
+
+**关键结论**
+
+1. 最小 Android 工程可编译、APK 可生成，artifact 可下载。
+2. 实际编译 Kotlin 版本为 **2.4.x**（依据产物 dex 中 `kotlin/Metadata` 的 `mv={2,4,0}`）。
+3. Compose 依赖实际版本：ui 1.12.1 / runtime 1.12.1 / material3 1.4.0 / activity-compose 1.13.0，
+   对应 compose-bom `2026.09.00`。
+4. SDK 安装链路正常：`platforms;android-37.0` 可装，`android-37` 符号链接生效，
+   `sdkmanager` 走 `command -v` 分支（`/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager`）。
+5. Android 构建的警告只有 `libandroidx.graphics.path.so` 无法 strip，本次构建仍 `BUILD SUCCESSFUL`；
+   另有 GitHub Actions 平台警告（Node.js 20 deprecated、`actions/setup-java@v4` 弃用），
+   与 Android 构建无关。详见 `docs/evidence/ci-setup.md` §7.1 / §7.2。
+
+**未验证 / 待确认**：KGP 精确版本号 2.4.21 未在 CI 日志明文打印（结论为推论链，见
+`ci-setup.md` §6.3）；Rust 交叉编译、UniFFI 绑定、Kotlin↔Rust 调用、真机安装运行均未开始。
+
+**第 2 / 3 轮**：待启动。第 2 轮目标为 `rust/` + `.github/workflows/rust.yml`，
+cargo-ndk 产出 arm64-v8a 与 x86_64 的 `.so`；不涉及 UniFFI 与 Kotlin 集成，不改 APK 打包流程。
+
+**证据归档**：`docs/evidence/ci-setup.md`（runner 环境、依赖版本、产物核验、已知警告、已验证/未验证清单）。
 
 ---
 
