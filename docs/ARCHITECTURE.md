@@ -149,6 +149,21 @@ NDK r30 需在 build.gradle.kts 中显式锁定，不依赖 AGP 默认值。
 - 不用 Gobley，不用第三方 UniFFI Gradle 插件
 - KGP 2.4.21 按 AGP 内置 Kotlin 机制固定，不重复应用 kotlin.android 插件
 
+### 7.1 支持的 ABI（明确声明）
+
+**当前原生核心只支持两个 ABI：`arm64-v8a` 与 `x86_64`。其余 ABI 不支持、不承诺。**
+
+| 项 | 值 |
+|---|---|
+| 支持 | `arm64-v8a`（`aarch64-linux-android`）、`x86_64`（`x86_64-linux-android`） |
+| 不支持 | `armeabi`、`armeabi-v7a`、`mips`、`mips64`、`x86` |
+| 声明位置 | `app/build.gradle.kts` 的 `defaultConfig.ndk { abiFilters += listOf("arm64-v8a","x86_64") }` |
+| 依据 | ADR-004 批准 JNA 5.19.1@aar 时同步批准 ABI 收敛 |
+| 校验 | CI 的 `scripts/verify-apk-native-libs.py` 做 APK 内 `lib/` 条目严格清单比对，多一条即失败 |
+
+影响：JNA AAR 自带 7 个 ABI 的 `libjnidispatch.so`，其中 5 个会被 `abiFilters` 裁掉，
+APK 内只剩两个 ABI 各 3 个库。若日后要支持 32 位设备，需先改这里与 ADR-004 的决策。
+
 ## 8. 质量门禁
 
 | 门禁项 | 阶段 1 | 阶段 2 | 阶段 3+ |

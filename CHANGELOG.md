@@ -239,3 +239,87 @@
 - `reverse/` 继续不进 Git（`.gitignore:2`）；`docs/evidence/` 进 Git 并公开，故索引文件中涉及密钥只写来源定位。
 - CI 日志、artifact、索引文件一律按公开内容对待，凭据纪律见 `docs/SECURITY.md` §6。
 - 本条目仅落本地文档；**GitHub 仓库创建与首次 push 由用户在本机执行**（需要 GitHub 账号与 remote 凭据），agent 不代跑。
+---
+
+## 2026-11-27
+
+### T-002e 第 3 轮：UniFFI 绑定 + Kotlin 集成（2026-11-27）
+
+#### 新增
+
+- `rust/core/uniffi.toml`：`[bindings.kotlin]` + `package_name = "com.netdiskhub.core"`；不写 `cdylib_name`（库模式从 .so 文件名自动推导）
+- `rust/uniffi-bindgen/`：workspace 内的绑定生成器 crate（`name = "uniffi-bindgen"` / `edition = "2024"` / `publish = false` / 依赖 `uniffi = { version = "=0.32.2", features = ["cli"] }`），入口 8 行 `fn main() { uniffi::uniffi_bindgen_main(); }`。版本由 `rust/Cargo.lock` 锁定，不装全局命令、不污染 PATH
+- `rust/Cargo.lock`：18999 B / 82 个 package / lockfile version 4，含 `netdiskhub-core 0.0.0`、`uniffi-bindgen 0.0.0`、`uniffi 0.32.2`。所有 Cargo 构建改为 `--locked`
+- `app/src/main/kotlin/com/netdiskhub/app/NativeProbe.kt`：编译期证明「Kotlin 能调用 Rust 导出函数」（`probeMagic()`），运行时验证留给 T-003
+- `scripts/verify-apk-native-libs.py`：纯 python3 无第三方依赖的 APK 原生库校验器。断言 ①`lib/` 条目严格等于 6 条清单（多一条即失败）②每个库 ELFCLASS64 且 `e_machine` 与 ABI 匹配 ③每个 `PT_LOAD` 的 `p_align >= 0x4000` ④`libnetdiskhub_core.so` 动态符号含 3 个必需符号 ⑤ZIP 内均 `ZIP_STORED` 且数据偏移 16 KB 对齐
+- `docs/ADR/ADR-004-jna-runtime.md`：引入 JNA 的决策记录，状态**已批准**，明确写「不使用 `tools:overrideLibrary`」
+
+#### 修改
+
+- `rust/Cargo.toml`：`[workspace] resolver = "3"` 的 `members` 从 `["core"]` 扩为 `["core","uniffi-bindgen"]`
+- `rust/core/Cargo.toml`：新增 `uniffi = "=0.32.2"` 依赖
+- `rust/core/src/lib.rs`：保留 `netdiskhub_probe`（第 2 轮 rust.yml 的符号断言依赖它，删了会让第 2 轮回归变红），新增 `#[uniffi::export] pub fn probe_magic() -> u32` 与 `uniffi::setup_scaffolding!()`。用 proc-macro 路线，不引入 UDL / `build.rs` / `build-dependencies`
+- `gradle/libs.versions.toml`：`[versions]` 追加 `jna = "5.19.1"`；`[libraries]` **刻意不声明** jna——版本目录不支持 `@aar` 后缀，声明成普通 module 会解析出不含 `libjnidispatch.so` 的 jar，运行期 `Native.register` 必失败
+- `app/build.gradle.kts`：新增 `ndkVersion = "30.0.16248370"`、`defaultConfig.ndk { abiFilters += listOf("arm64-v8a","x86_64") }`、两个抽象任务类型 `CargoNdkBuildTask` 与 `GenerateUniffiBindingsTask`；`androidComponents.onVariants` 里用 `jniLibs.addGeneratedSourceDirectory` 与 `kotlin.addGeneratedSourceDirectory` 接入生成产物；`dependencies` 追加 `net.java.dev.jna:jna:5.19.1@aar`
+- `.github/workflows/build.yml`：`runs-on` 由 `ubuntu-latest` 改为 `ubuntu-24.04`；新增 concurrency；SDK 步骤加装 NDK r30 并断言 `Pkg.Revision`、三变量同指一个完整目录；新增装 Rust 1.100.0 + 双 Android target、装 cargo-ndk 4.1.2 `--locked`、校验工具链版本；`assembleDebug` 后新增三步校验（Kotlin 绑定文件内容 / 绑定已编进 dex / APK 原生库）
+- `.github/workflows/rust.yml`：交叉编译命令补 `--locked`
+- `docs/ARCHITECTURE.md`：新增 **§7.1 支持的 ABI（明确声明）**，写死只支持 `arm64-v8a` 与 `x86_64`、不支持哪 5 个、声明在哪个文件、由哪个脚本校验，并说明 JNA 其余 5 个 ABI 被裁掉
+- `docs/TASKS.md`：T-002e 状态改为「进行中（第 1、2、3 轮完成；test / quality-gate workflow 未做）」；新增「第 3 轮完成情况」整节
+- `docs/evidence/ci-setup.md`：新增 **§11 第 3 轮运行记录**（11 个子节，含两次失败原文、13 步逐条时间表、工具链实测、绑定生成、dex、APK 原生库 6 条清单、JNA 与 Manifest 合并 4 项验证、Artifact、警告、已验证/未验证）
+
+#### 结论（实测，非推测）
+
+- CI 第 3 次运行 [run 45950571670](https://github.com/lxyhyh/netdisk-hub/actions/runs/45950571670) **13 步全 success**，耗时 3 分 04 秒
+- UniFFI 绑定点产出 `app/build/generated/kotlin/generateUniffiBindingsDebug/com/netdiskhub/core/netdiskhub_core.kt`，**40751 B**，含 `package com.netdiskhub.core` 与 ``fun `probeMagic` ``
+- 绑定真实编进 dex：`classes3.dex` 与 `classes4.dex` 命中 `Lcom/netdiskhub/core/` 与 `probeMagic`（门面 `Netdiskhub_coreKt`）
+- APK 内 `lib/` **恰好 6 条**：两 ABI × {`libandroidx.graphics.path.so`, `libjnidispatch.so`, `libnetdiskhub_core.so`}；全部 ELFCLASS64、`PT_LOAD p_align` 全 `0x4000`、全部 `ZIP_STORED` 且数据偏移 16 KB 对齐
+- JNA 5.19.1@aar 可解析、可打包；**Manifest 合并无错、全程未用 `tools:*`**，合并后 `targetSdkVersion=37`（宿主值覆盖 JNA 的 25）
+
+#### 未完成 / 待确认
+
+- **运行时端到端未验证**：`probeMagic()` 的返回值（应为 65538）从未在设备或模拟器执行；`UniffiLib` 能否运行时 `Native.register` 成功未知。属 T-003 范围
+- UniFFI contract checksum 期望值 `62777`（绑定第 815 行）只有跑起来才能验证匹配
+- `test` workflow 与 `quality-gate` workflow 仍未建立
+- `release` 构建（R8/minify、strip 配置）未验证，本轮只跑 `debug`
+
+#### 说明
+
+- 本轮 CI **失败两次才绿**，两次失败原因已原文记入 `docs/evidence/ci-setup.md` §11.2 / §11.3：
+  ①Kotlin DSL 里写 `java.io.File(...)` 会被解析成扩展属性（`Unresolved reference: 'io'`）——必须顶部显式 `import java.io.File`；
+  ②手动 `set outputDir` 又用字符串塞 `sourceSets.jniLibs.directories`，AGP 看不到依赖，报 `mergeDebugJniLibFolders` 隐式依赖错误——AGP 9 只能走变体 API 的 `addGeneratedSourceDirectory`
+- 第 3 轮只做「构建链接通 + APK 静态产物验证」，**不执行任何 Rust 代码**；`T-003` 保持待启动，未标记完成
+
+---
+
+## 2026-11-27（续）
+
+### T-002e 第 3 轮验收加固：GNU_RELRO 官方断言 + zipalign（2026-11-27）
+
+#### 修改
+
+- `scripts/verify-apk-native-libs.py`：新增 `Elf.check_relro()`，按官方 16 KB 页面文档的三个并列条件判定（A 无 `GNU_RELRO` / B 结束地址 `% 0x4000 == 0` / C RELRO 之后同一 LOAD 段内无可写数据）。C 分两档实现：C1 用官方等式 `LOAD.VirtAddr + LOAD.MemSiz == RELRO.VirtAddr + RELRO.MemSiz`；C2 把 RELRO 覆盖范围按 16 KB 取整成页区间，要求区间内 RELRO 之外无可写字节。RELRO 起始地址不落在任何 `PT_LOAD` 内时**直接判失败**，不静默通过。删除原 `relro_note()`（只打印不判定）
+- `scripts/verify-apk-native-libs.py`：新增 `--selftest`，用合成 ELF 回归官方 Example 1–4 与一条「RELRO 不在任何 `PT_LOAD` 内」负例；CI 中在检查真 APK 之前执行
+- `.github/workflows/build.yml`：`Verify APK native libraries` 步骤加一行 `--selftest`；新增独立步骤 `Verify APK zipalign 16 KB page alignment`，执行 `$ANDROID_HOME/build-tools/36.0.0/zipalign -v -c -P 16 4 "$APK"`，退出码非 0 或缺 `Verification successful` 都令 workflow 失败。原有 python ZIP 偏移检查**保留**
+- `docs/evidence/ci-setup.md`：新增 §11.13（为什么要改 / 脚本实现 / 六库 RELRO 实测判定表 / 官方 zipalign 验收 / 第 4 次运行结果 / 本次未改动部分 / 六库完整判定输出）；§11.8 的 RELRO 段改写为「已被 §11.13 取代」并承认旧理由错误；§11.1 补第 4 次提交与运行
+- `docs/TASKS.md`：T-002e 第 3 轮完成情况补提交 4、第 4 次运行、六库 RELRO 判定表与 zipalign 验收；状态仍为「进行中」
+- `docs/ARCHITECTURE.md`：新增 **§7.1 支持的 ABI（明确声明）**——只支持 `arm64-v8a` 与 `x86_64`，不支持 `armeabi`/`armeabi-v7a`/`mips`/`mips64`/`x86`；声明位置 `app/build.gradle.kts` 的 `abiFilters`；依据 ADR-004；校验脚本 `scripts/verify-apk-native-libs.py`
+
+#### 结论（实测）
+
+- 第 4 次运行 [run 45952694106](https://github.com/lxyhyh/netdisk-hub/actions/runs/45952694106) **14 个业务步骤全 success**，3 分 00 秒
+- `--selftest` 输出「selftest 通过：5 个官方示例判定一致」
+- 6 个 `.so` 的 RELRO **全部合规、无一需要修复**：`libjnidispatch.so` 两 ABI 靠条件 B；两个 `libnetdiskhub_core.so` 靠条件 C1；两个 `libandroidx.graphics.path.so` 靠条件 C2（按官方规则算出的结论，不是豁免）
+- zipalign 输出 `Verification successful`，6 个 `.so` 全部 `(OK)`
+- APK Artifact `15177950350`，zip 10770227 B，digest `sha256:a6f6b9e3…2ec1614a`；下载后 30500633 B，SHA256 `725dca77…8077e03ab`
+- 最终断言：`PASS: 6 个原生库通过 清单 / ELF / PT_LOAD 16 KB 对齐 / GNU_RELRO 官方条件 / ZIP 页对齐 / 符号 检查`
+
+#### 未完成（不变）
+
+- `probeMagic()` 运行时返回 65538 仍**未验证**（属 T-003）；contract checksum `62777` 是否匹配未知
+- `test` workflow 与 `quality-gate` workflow 仍未建立
+- `release` 构建（R8/minify、strip）未验证
+
+#### 说明
+
+- 改动前 `PT_GNU_RELRO` 只打印不判定，理由是「Google 自己的 `androidx.graphics.path.so` 也不对齐」；该理由不成立——官方规则是**三个并列条件满足其一即合规**，不对齐只说明要继续走条件 C，不是免检。本次按规则补齐断言
+- 按验收要求「不重新设计构建链、不修改已通过的其他部分」，Rust / cargo-ndk / NDK / Gradle / AGP / Kotlin / JNA 版本与 `app/build.gradle.kts` 全部未动
