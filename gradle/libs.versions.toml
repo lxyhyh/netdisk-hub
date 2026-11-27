@@ -6,6 +6,8 @@
 #   且版本 ≥2.2.10 时，Gradle 会自动把 KGP 对齐到该版本 → 声明 2.4.21 即内置 KGP 生效 2.4.21
 # - composeBom 2026.09.00 解析为 ui 1.12.1（minCompileSdk=37, minor=0）/ material3 1.4.0
 #   2026.11.01 会解析为 ui 1.13.0（要求 compileSdk 37.1），故不用
+# - jna 必须用 AAR 变体（见 docs/ADR/ADR-004-jna-runtime.md）。版本目录的 module/version
+#   记法无法表达 @aar 后缀，因此只在这里锁定版本，坐标在 app/build.gradle.kts 里拼出
 
 [versions]
 agp = "9.3.1"
@@ -13,12 +15,15 @@ kotlinBuiltInKgp = "2.4.21"
 composeCompiler = "2.4.21"
 composeBom = "2026.09.00"
 activityCompose = "1.13.0"
+jna = "5.19.1"
 
 [libraries]
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 compose-ui = { module = "androidx.compose.ui:ui" }
 compose-material3 = { module = "androidx.compose.material3:material3" }
+# net.java.dev.jna:jna 不在此声明：版本目录不支持 @aar 变体后缀，
+# 声明成普通 module 会解析出不含 libjnidispatch.so 的 jar，运行期 Native.register 必失败。
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

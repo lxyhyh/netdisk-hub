@@ -1,0 +1,10 @@
+[package]
+name = "uniffi-bindgen"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# 用 workspace 内的 crate 而非 cargo install：
+# 版本由 Cargo.lock 锁定，不依赖 runner 上是否预装了某个全局 uniffi-bindgen。
+[dependencies]
+uniffi = { version = "=0.32.2", features = ["cli"] }

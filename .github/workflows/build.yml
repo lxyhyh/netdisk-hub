@@ -1,7 +1,8 @@
 name: build
 
-# T-002e 第 1 轮：最小 Android 工程 + APK 打包（不含 Rust）
-# 目标：:app:assembleDebug 成功，APK 作为 artifact 可下载
+# T-002e 第 3 轮：Rust UniFFI 导出 → 双 ABI 交叉编译 → Kotlin 绑定生成
+#              → Kotlin 编译 → APK 打包 → APK 原生库静态检查
+# 本轮只验证构建与静态产物，不执行任何 Rust 代码（运行时端到端属 T-003）
 
 on:
   push:
@@ -10,9 +11,15 @@ on:
     branches: [ master ]
   workflow_dispatch:
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # 固定 24.04：NDK / Rust / SDK 环境按 Ubuntu 24.04 runner 的实际软件清单设计，
+    # 不依赖 ubuntu-latest 的操作系统迁移状态（与 rust.yml 保持一致）
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -29,25 +36,126 @@ jobs:
         with:
           gradle-version: '9.7.0'
 
-      # SDK 平台包名是 platforms;android-37.0（不存在裸 platforms;android-37）
-      # AGP 9.3.1 的 AndroidApiLevel.toString() 对 37 拼出 "37.0"，
-      # 平台哈希为 android-37.0；符号链接作为兜底，避免 agent 查找 android-37 失败
-      - name: Install Android SDK platform 37
+      # 一次装齐三样东西：
+      #   platforms;android-37.0  —— SDK 平台包名不是 android-37
+      #   build-tools;36.0.0
+      #   ndk;30.0.16248370       —— AGP 的 ndkVersion 与 cargo-ndk 用同一个 NDK
+      # 装完逐个断言版本，不只打印
+      - name: Install Android SDK platform 37, build-tools 36, NDK r30
         run: |
           set -euo pipefail
           SDKMANAGER="$(command -v sdkmanager || true)"
           if [ -z "$SDKMANAGER" ]; then
-            SDKMANAGER="$(find "$ANDROID_HOME" -maxdepth 4 -type f -name sdkmanager | head -n 1)"
+            SDKMANAGER="$(find "${ANDROID_HOME:?}" -maxdepth 4 -type f -name sdkmanager | head -n 1)"
           fi
           echo "sdkmanager = $SDKMANAGER"
           yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-          "$SDKMANAGER" "platforms;android-37.0" "build-tools;36.0.0"
+          "$SDKMANAGER" "platforms;android-37.0" "build-tools;36.0.0" "ndk;30.0.16248370"
+
+          # AGP 查 platform 哈希用 android-37，包名却是 android-37.0，建符号链接兜底
           ln -sfn "$ANDROID_HOME/platforms/android-37.0" "$ANDROID_HOME/platforms/android-37"
           ls "$ANDROID_HOME/platforms"
           ls "$ANDROID_HOME/build-tools"
 
+          NDK_DIR="${ANDROID_HOME}/ndk/30.0.16248370"
+          test -d "$NDK_DIR" || { echo "::error::missing $NDK_DIR"; exit 1; }
+          NDK_REV="$(grep '^Pkg.Revision' "$NDK_DIR/source.properties" | sed 's/.*= *//')"
+          echo "NDK_DIR = $NDK_DIR"
+          echo "source.properties Pkg.Revision = $NDK_REV"
+          if [ "$NDK_REV" != "30.0.16248370" ]; then
+            echo "::error::NDK revision mismatch: got $NDK_REV, expected 30.0.16248370"
+            exit 1
+          fi
+
+          # 三个变量指向同一个完整版本目录（cargo-ndk 4.x 会校验一致性并取第一个）
+          {
+            echo "ANDROID_NDK_HOME=$NDK_DIR"
+            echo "ANDROID_NDK_ROOT=$NDK_DIR"
+            echo "ANDROID_NDK=$NDK_DIR"
+          } >> "$GITHUB_ENV"
+
+      - name: Install Rust 1.100.0 with Android targets
+        uses: dtolnay/rust-toolchain@1.100.0
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - name: Install cargo-ndk 4.1.2
+        run: cargo install cargo-ndk --version 4.1.2 --locked
+
+      - name: Verify toolchain versions
+        run: |
+          set -euo pipefail
+          RUSTC_VER="$(rustc -V)"
+          NDK_VER="$(grep '^Pkg.Revision' "${ANDROID_NDK_HOME}/source.properties" | sed 's/.*= *//')"
+          echo "rustc: $RUSTC_VER"
+          echo "cargo: $(cargo -V)"
+          echo "NDK  : $NDK_VER (${ANDROID_NDK_HOME})"
+          case "$RUSTC_VER" in
+            "rustc 1.100.0 "*) ;;
+            *) echo "::error::unexpected rustc: $RUSTC_VER"; exit 1 ;;
+          esac
+          echo "cargo-ndk: $(cargo ndk --version)"
+          cargo ndk --version | grep -q "cargo-ndk 4.1.2" \
+            || { echo "::error::unexpected cargo-ndk version"; exit 1; }
+          if [ "$NDK_VER" != "30.0.16248370" ]; then
+            echo "::error::unexpected NDK revision: $NDK_VER"
+            exit 1
+          fi
+
+      # 这一步同时触发 cargoNdkBuild（cargo ndk 交叉编译）与
+      # generateUniffiBindings（cargo build uniffi-bindgen + 抽元数据生成绑定）
       - name: Build debug APK
         run: gradle :app:assembleDebug --no-daemon --stacktrace
+
+      # 绑定文件必须真的生成到 AGP 的变体源目录里，且内容含探针入口；
+      # 只断言文件存在不够——空文件也能「存在」。
+      - name: Verify UniFFI Kotlin bindings
+        run: |
+          set -euo pipefail
+          BINDINGS="$(find app/build -type f -name netdiskhub_core.kt | head -n 1)"
+          echo "bindings = $BINDINGS"
+          test -n "$BINDINGS" || { echo "::error::未生成 UniFFI Kotlin 绑定"; exit 1; }
+          SIZE="$(stat -c%s "$BINDINGS")"
+          echo "size = $SIZE bytes"
+          test "$SIZE" -gt 20000 || { echo "::error::绑定文件过小 $SIZE"; exit 1; }
+          grep -q '^package com.netdiskhub.core$' "$BINDINGS" \
+            || { echo "::error::绑定 package 行不对"; exit 1; }
+          grep -qF 'fun `probeMagic`' "$BINDINGS" \
+            || { echo "::error::绑定里没有 probeMagic"; exit 1; }
+          grep -q 'com.sun.jna' "$BINDINGS" \
+            || { echo "::error::绑定里没有 JNA 依赖"; exit 1; }
+          echo "--- 前 8 行 ---"
+          head -n 8 "$BINDINGS"
+
+      # Kotlin 绑定必须被真正编译进 dex，而不是只存在于源码目录
+      - name: Verify Kotlin bindings are compiled into the APK
+        run: |
+          set -euo pipefail
+          APK="$(ls app/build/outputs/apk/debug/*.apk | head -n 1)"
+          echo "apk = $APK"
+          rm -rf /tmp/apkdex && mkdir -p /tmp/apkdex
+          unzip -o -q "$APK" 'classes*.dex' -d /tmp/apkdex
+          ls -la /tmp/apkdex
+          # 判据用「包路径 + 函数名」，不依赖 Kotlin 文件门面类（<文件名>Kt）的具体拼写，
+          # 门面名只作为提示打印，避免因命名细节误判为绑定没编译。
+          if ! grep -a -l 'Lcom/netdiskhub/core/' /tmp/apkdex/*.dex; then
+            echo "::error::APK 的 dex 里没有 com.netdiskhub.core 包（绑定未参与编译）"
+            exit 1
+          fi
+          if ! grep -a -l 'probeMagic' /tmp/apkdex/*.dex; then
+            echo "::error::APK 的 dex 里没有 probeMagic"
+            exit 1
+          fi
+          echo "OK: dex 含 com.netdiskhub.core 与 probeMagic"
+          grep -a -o 'Netdiskhub_coreKt' /tmp/apkdex/*.dex | head -n 2 || true
+
+      # 逐库检查：lib/ 清单严格比对、ELFCLASS64、e_machine、PT_LOAD 16 KB 对齐、
+      # ZIP 存储与页对齐、Rust 导出符号。判据与取舍写在脚本 docstring 里。
+      - name: Verify APK native libraries
+        run: |
+          set -euo pipefail
+          APK="$(ls app/build/outputs/apk/debug/*.apk | head -n 1)"
+          python3 scripts/verify-apk-native-libs.py "$APK"
 
       - name: Upload APK
         if: success()

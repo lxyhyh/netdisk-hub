@@ -113,7 +113,7 @@ jobs:
             -P 31 \
             -o target/jniLibs \
             --manifest-path core/Cargo.toml \
-            build --release
+            build --release --locked
 
       - name: Verify artifacts
         run: |

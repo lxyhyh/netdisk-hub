@@ -27,3 +27,7 @@ rust/target/
 
 # 原生库（由 CI 从 Rust 构建产出，不进 Git）
 app/src/main/jniLibs/
+
+# python 临时产物
+__pycache__/
+*.pyc
