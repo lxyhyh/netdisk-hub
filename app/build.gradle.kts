@@ -9,6 +9,7 @@ import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.io.File
 import javax.inject.Inject
 
 plugins {
@@ -64,7 +65,7 @@ abstract class CargoNdkBuildTask : DefaultTask() {
         )
         logger.lifecycle("cargo-ndk: " + args.joinToString(" "))
         execOps.exec {
-            workingDir = java.io.File(rustDir.get())
+            workingDir = File(rustDir.get())
             // cargo-ndk 4.x 按 ANDROID_NDK_HOME → ANDROID_NDK_ROOT → ANDROID_NDK_PATH → NDK_HOME
             // 顺序找 NDK，这里三个都指到 AGP 解析出的同一个目录，避免命中别处的老版本。
             environment("ANDROID_NDK_HOME", ndk)
@@ -98,7 +99,7 @@ abstract class GenerateUniffiBindingsTask : DefaultTask() {
 
     @TaskAction
     fun generate() {
-        val rustDirFile = java.io.File(rustDir.get())
+        val rustDirFile = File(rustDir.get())
         val bindgen = rustDirFile.resolve("target/release/uniffi-bindgen")
 
         execOps.exec {
@@ -223,8 +224,10 @@ android {
     }
 
     sourceSets.getByName("main") {
-        // cargoNdkBuild 的产物目录，作为 jniLibs 源目录参与打包
-        jniLibs.srcDir(layout.buildDirectory.dir("rustJniLibs"))
+        // cargoNdkBuild 的产物目录，作为 jniLibs 源目录参与打包。
+        // srcDir(Any) 在 AGP 9.3.1 已废弃（CI 日志 w: 'fun srcDir' is deprecated），
+        // 改用 directories: MutableSet<String>，写入绝对路径字符串。
+        jniLibs.directories.add(layout.buildDirectory.dir("rustJniLibs").get().asFile.absolutePath)
     }
 
     buildFeatures {
