@@ -150,12 +150,41 @@ jobs:
           grep -a -o 'Netdiskhub_coreKt' /tmp/apkdex/*.dex | head -n 2 || true
 
       # 逐库检查：lib/ 清单严格比对、ELFCLASS64、e_machine、PT_LOAD 16 KB 对齐、
-      # ZIP 存储与页对齐、Rust 导出符号。判据与取舍写在脚本 docstring 里。
+      # GNU_RELRO 官方 16 KB 条件、ZIP 存储与页对齐、Rust 导出符号。
+      # 判据与官方文档出处写在脚本 docstring 里。
       - name: Verify APK native libraries
         run: |
           set -euo pipefail
           APK="$(ls app/build/outputs/apk/debug/*.apk | head -n 1)"
+          # 先跑官方 16 KB 文档 Example 1–4 的回归，确认 RELRO 判定实现与官方一致
+          python3 scripts/verify-apk-native-libs.py --selftest
           python3 scripts/verify-apk-native-libs.py "$APK"
+
+      # 官方 16 KB 页面文档要求的 zipalign 验收，与上面的 python ZIP 检查互为交叉验证：
+      #   https://developer.android.com/guide/practices/page-sizes
+      # 该命令必须真实执行，输出末行为 "Verification successful"，失败即令 workflow 失败。
+      - name: Verify APK zipalign 16 KB page alignment
+        run: |
+          set -euo pipefail
+          APK="$(ls app/build/outputs/apk/debug/*.apk | head -n 1)"
+          ZIPALIGN="${ANDROID_HOME:?}/build-tools/36.0.0/zipalign"
+          test -x "$ZIPALIGN" || { echo "::error::missing zipalign at $ZIPALIGN"; exit 1; }
+          echo "zipalign = $ZIPALIGN"
+          echo "apk      = $APK"
+          set +e
+          ZIPALIGN_OUT="$("$ZIPALIGN" -v -c -P 16 4 "$APK" 2>&1)"
+          ZIPALIGN_RC=$?
+          set -e
+          printf '%s\n' "$ZIPALIGN_OUT"
+          if [ "$ZIPALIGN_RC" -ne 0 ]; then
+            echo "::error::zipalign -c -P 16 4 失败，退出码 $ZIPALIGN_RC"
+            exit 1
+          fi
+          if ! printf '%s\n' "$ZIPALIGN_OUT" | grep -q 'Verification successful'; then
+            echo "::error::zipalign 输出里没有 Verification successful"
+            exit 1
+          fi
+          echo "OK: zipalign 报告 Verification successful"
 
       - name: Upload APK
         if: success()
