@@ -1,7 +1,7 @@
 # 接口事实库（API_FACTS）
 
-- 状态：草案 **v0.5**
-- 产出任务：T-001（T-002a 资料定性 / T-002b 坚果云 / T-002d 百度 + 四个 Flutter 网盘壳确认 / **T-002c 九个网盘登录可行性判定**）
+- 状态：草案 **v0.6**
+- 产出任务：T-001（T-002a 资料定性 / T-002b 坚果云 / T-002d 百度 + 四个 Flutter 网盘壳确认 / T-002c 九个网盘登录可行性判定 / **T-006 百度原生登录深度取证**）
 - 最后更新：2026-11-28
 
 ## 记录格式
@@ -15,11 +15,14 @@
 
 ## 全局说明
 
-**当前状态（T-002c 后）：9 个网盘的原生登录可行性已全部判定——可行 1 个（坚果云）、需攻关 3 个（百度、夸克、阿里）、未知 2 个（天翼、123）、不可行 3 个（蓝奏、UC、迅雷）。**
+**当前状态（T-006 后）：9 个网盘的原生登录可行性已全部判定——可行 2 个（坚果云、百度）、需攻关 2 个（夸克、阿里）、未知 2 个（天翼、123）、不可行 3 个（蓝奏、UC、迅雷）。**
+
+> 变化说明：百度由「需攻关」改为「原生登录可行」，依据是 T-006 深度取证（`docs/evidence/baidu-login-deep-dive.md`）。**这不改写 T-005 的历史 No-Go 结论**，是否重跑 Go/No-Go 由用户决定。
 
 原因：
 
 - 坚果云（T-002b）与百度（T-002d）是 `Java/Kotlin 主体`，协议在 dex 里，登录链路可完整读出；差别在于坚果云只有 Base64，百度有设备指纹与风控 SDK。
+- 百度（T-006）三条登录路径（账号密码/短信/扫码）**均不依赖官方闭源 native**：`tpl`/`appSignKey` 是 APK 硬编码常量，`di` 40 字段已逐项定性且加密全在 Java 侧，`passport_core` 六 native 在三条主链 0 调用，其余 6 个安全库只服务业务 API / APK 校验 / P2P / OAID。
 - 夸克、阿里虽然由 Flutter 承载**文件业务**，T-002c 定向反编译确认**账号登录体系完整存在于 dex 的 Java 层**（夸克 `UCLoginServiceImpl` + MTOP；阿里 `com/ali/user/mobile` + Havana/login4android），所以登录协议可读；两者都被阿里聚安全 native 阻断请求签名。
 - 天翼、123 的 dex 只有 3/4 个壳桩类、**0 条登录线索**，业务在 `libapp.so`（Dart AOT），天翼另有爱加密整包载荷 → 属技术栈决定的上限，不是遗漏。
 - 蓝奏、UC、迅雷按 T-001 拍板记为资料缺失，按 `docs/SCOPE.md` 第 6 节兜底，不攻关。
@@ -75,18 +78,33 @@
 
 1. 登录类型：**账号密码 / 短信验证码 / 扫码**（三条通道均有客户端协议；第三方 SSO 与 WebView 容器路径不计入）
 2. 是否可在 APP 内原生完成：**是**。业务侧实际入口 `classes13/sources/com/baidu/netdisk/ui/account/i0.java:369` `passportSDK.startNewNALogin(...)` → `NewLoginActivity` / `NewLoginHalfActivity`（`classes4/sources/com/baidu/sapi2/newlogin/activity/`，搜 WebView/loadUrl 三处均 0 命中）
-3. 会话换取方式：**官方客户端接口**。账号密码 `POST {wap}/wp/api/login`（`SapiAccountRepository.java:2873-2901`，端点 `:1126-1128`）；短信 `POST /v2/sapi/login`（同文件 `:263-298`）；扫码 `GET /v2/api/getqrcode` → `GET /channel/unicast` → `POST /v2/sapi/qrlogin?lp=app`（`QrCodeService.java:314-326 / :387-397 / :367-384`）。返回 `bduss` / `ptoken` / `stoken` / `uid`（`SapiAccountResponse.java:14-20`），落 `sapi_system` 偏好（`SapiContext.java:61-65`）
+3. 会话换取方式：**官方客户端接口**。账号密码 `POST {wap}/wp/api/login`（`SapiAccountRepository.java:2873-2901`，端点 `:1126-1128`）；短信 `POST /v2/sapi/login`（同文件 `:263-298`）；扫码 `GET /v2/api/getqrcode` → `GET /channel/unicast` → `GET /v2/api/bdusslogin`（或 `/v3/login/main/qrbdusslogin`）；`POST /v2/sapi/qrlogin?lp=app` 是**被扫端（已登录设备）**的确认接口，本项目作为扫码端不需要（`QrCodeService.java:314-326 / :387-397 / :354-364 / :367-384`）。返回 `bduss` / `ptoken` / `stoken` / `uid`（`SapiAccountResponse.java:14-20`），落 `sapi_system` 偏好（`SapiContext.java:61-65`）
 4. 是否需要 OAuth 或 WebView 才能完成：**否**。`https://openapi.baidu.com/oauth/2.0/token` 常量（`SapiAccountRepository.java:1111-1121`）只用于 `openConnection()` 取 `getDate()/1000` 当时间戳（`:1102`），不参与鉴权；`grep -rn '.oauth(' classes*/sources/com/baidu/netdisk/` → 0 命中。`web2NativeLogin`（`:2951-3010`）从 cookie 读 BDUSS，属官方内部账号中心通道，**本项目不计为可用路径**
 5. 扫码登录 token 来源：**客户端协议**（`/v2/sapi/qrlogin`，参数 `sign` / `cmd` / `bduss` / `stoken` / `ptoken`），不是 WebView 抓取
 6. token 刷新机制：**无主动刷新**。`SapiAccountManager.java:436` 有 `onBdussExpired` 回调，`SapiAccountRepository.java:2994-2997` 用错误码 400021 表示 bduss 过期（已验证）
 7. token 有效期：**未知**（客户端无过期时间字段）
 8. 依据：`docs/evidence/login-feasibility.md` §3.2（逐跳行号）；`docs/evidence/index-百度.md` §4
-9. 登录可行性结论：**需攻关**
-10. 若需攻关：① `di` 设备指纹，`SapiDeviceInfo.java:205-209 / :189-191 / :193-203 / :82-184` 采 40 个字段（含 IMEI/MAC/包列表/device_uuid），AES 密钥为明文常量（`:8`），**算法可复刻，但字段裁剪受灰度开关控制**；② `tpl` / `appSignKey` 运行期注入（`getUaInfo()` `:198-200`），取值**待确认**；③ 聚安全 / `passport_core`（`PassCoreVHelper.java:4-19` 六个 native），使用点仅 `SapiConfiguration.java:553/562`、`OneKeyLoginSdkCall.java:131-132`、`ShareStorage.java:259/290/352`，**不在账号密码/短信主链**；④ 服务端风控放行强度**待确认**
+9. 登录可行性结论：**原生登录可行（静态可行，动态未验证）**
+   - 分路径：账号密码 **可独立实现** / 短信验证码 **可独立实现** / 扫码 **可独立实现**（T-006 复核，`docs/evidence/baidu-login-deep-dive.md` §11）
+   - 依据强度：三条路径均不依赖官方闭源 native；但仍需动态验证服务端是否接受本项目构造的 `sig` / `di`
+10. 若需攻关：**T-006 后不再成立**——原 4 项攻关点已逐项处理（见下表），当前无阻断性攻关项。仅剩服务端行为类待动态验证（见第 12 项）。
+
+    | 原攻关点（T-002c） | T-006 复核结果 | 状态 |
+    |---|---|---|
+    | `di` 设备指纹 40 字段受灰度裁剪 | 40 项逐项定性（必需 22 / 条件 2 / 可选 16）；加密与 16 字符 AES key 均在 Java（`SapiDeviceInfo.java:8`、`:189-203`）；`mPrivacyParamesRegulation=false`（`C_.java:199` 实参）使 `dt_params` **实际不生效**；仅服务端下发的 `diExceptIndex`（默认空）仍动态 | **静态已解** |
+    | `tpl` / `appSignKey` 运行期注入、取值待确认 | **推翻旧说法**：是 APK 硬编码明文常量（`kd/______.java:11` appId / `:14` 国内 appSignKey / `:15` tpl / `:17` 国际 appSignKey）；`DebugSetKey` 覆盖仅 debug 生效（`kernel/debug/C_.java:82-88`）；签名真正在 `HttpHashMapWrap.java:9-15`，基类 `HttpHashMap.java:7-8` 的 `doSign` 是空方法，唯一调用点 `HttpClientWrap.java:87` | **已解** |
+    | 聚安全 / `passport_core` 六个 native | 全 dex 仅 7 处调用（5 文件），**三条主链 0 处**；缺失时有 `catch (Throwable)` 兜底（`SapiConfiguration.java:553-575`）；`nm -D` 仅 6 个 `Java_` 导出、无 `JNI_OnLoad`、`RegisterNatives` 0 命中 | **已解：不阻断** |
+    | 服务端风控放行强度 | 6 个安全 native 库的加载入口与唯一调用点全部落行号，**均不经过三条登录路径**（分属业务 API 加签 `ex/n3.java:49` / APK 签名校验 `CertVerifier.java:38` / P2P 下载 / MSA OAID / sofire 旁路） | **静态已解**，服务端行为仍待动态 |
 11. 若不可行：不适用（无不可行证据）
-12. 若未知：不适用（已定位到可枚举的攻关项，非资料不足）
+12. 若未知：不适用。但仍有三项**服务端行为**必须动态验证（不是资料不足，是静态无法证明）：
+    - 服务端是否接受本项目构造的 `sig`（MD5 字典序签名）与 `di`（AES 加密的 40 字段指纹）；
+    - `diExceptIndex`（`sapi_options` 下发，`SapiOptions.java:62` 默认空）线上实际排除哪些索引；
+    - `BAIDUID` cookie 是否必须非空（`ParamsUtil.java:81` 允许空串）；是否出现额外风控挑战（验证码 / 设备信任 / 异地登录）。
+    - 另注：**「获取短信验证码」的接口本次未取证**（T-006 范围只到「已拿到验证码之后」的登录步骤），实现短信路径前需补。
 
 > **修正 T-002d 的两处**：原写「扫码登录未发现独立实现」「换取接口路径未定位」，T-002c 已在 `QrCodeService.java` 定位到三步扫码客户端协议与 `wapLogin` 端点，两处作废。
+
+> **T-006 增补三条（2026-11-28）**：①签名基类 `HttpHashMap.doSign` 是**空方法**，真正签名在 `HttpHashMapWrap.java:9-15`（唯一调用点 `HttpClientWrap.java:87`），此前记在基类处属定位偏差；②扫码路径**不发 `di`、不加 `sig`**（`QrCodeService.java` 全文 `getDeviceInfo`/`HttpHashMapWrap` 均 0 命中），是三条路径里依赖最少的一条；③账号密码路径的 `di` **不在 body**，只经 `ParamsUtil.buildNaCookie` 的 `DVIF` cookie 传递（`ParamsUtil.java:75-79`）。
 > **Sdata 不影响登录**：`Sdata` 头只在自研网络栈加（`classes6/sources/com/baidu/netdisk/network/c.java:126` 等 3 处，且 `c.java:105-130` 条件是 `!isHttps && !whitelist`）；sapi2 链路（`com/baidu/pass/http/a.java`）只设 UA 与 Content-Type，在 `classes2`/`classes12` 的 sapi2 目录搜 `Sdata` → 0 命中。Sdata 签名实现仍是**确定缺口**（`hk/__.java:469-475` 纯转发 `Function2.invoke`，`.n0(Function2` 静态调用方 0 命中），但它**不属于登录链路**，本文不写成已还原。
 
 ### 待确认问题
@@ -96,8 +114,8 @@
 - token 刷新与过期策略？
 - ~~扫码登录是否存在（dex 内未发现）？~~ **已关闭**：T-002c 定位到 `QrCodeService.java` 三步扫码客户端协议（getqrcode → /channel/unicast → /v2/sapi/qrlogin）
 - 服务端是否接受 `Range`（客户端已在 `np0/d.java:21`、`np0/r.java:208`、`np0/s.java:139` 发送）？
-- `app_id` 常量（`classes2/sources/ew/C_.java:29` 初值为 null，由 `:82` 运行期注入）真实值？
-- 是否存在验证码或风控挑战（`libnetdisk-security.so` 等 6 类风控 SDK 的参与度）？
+- ~~`app_id` 常量真实值？~~ **已关闭（T-006）**：`ew._.i = f` 在 `kd/______.java:38` 由常量类赋值（`f` = `:18`，8 位数字串），取值见 `reverse/baidu/`，本文不抄录
+- ~~是否存在验证码或风控挑战（风控 SDK 参与度）？~~ **部分关闭（T-006）**：6 个安全 native 库的加载入口与唯一调用点已全部定位，**均不经过三条登录路径**（见 `docs/evidence/baidu-login-deep-dive.md` §5）；但**服务端是否会因此发起风控挑战仍待动态验证**
 
 ### 已知线索
 
@@ -464,7 +482,7 @@
 
 | 网盘 | 静态反编译 | 主体技术栈 | 覆盖率 | 登录流程 12 字段 | 文件接口 | **登录可行性（T-002c）** |
 |---|---|---|---|---|---|---|
-| 百度网盘 | T-002d 已完成 | Java/Kotlin 主体 + Flutter 模块 | 100.0000%（63259/63259） | **已填满** | 静态线索（40+ 接口） | **需攻关** |
+| 百度网盘 | T-002d 已完成；**登录经 T-006 深度取证** | Java/Kotlin 主体 + Flutter 模块 | 100.0000%（63259/63259） | **已填满** | 静态线索（40+ 接口） | **原生登录可行**（静态可行，动态未验证） |
 | 天翼云盘 | T-002d 壳确认 | Flutter 主体 + 爱加密 | 不适用（dex 仅 3 类壳桩） | **已填满（12 项均为未知）** | 未知 | **未知（需动态分析）** |
 | 夸克网盘 | T-002c 定向反编译 classes7/10 | Flutter 承载文件业务；**登录在 Java 层** | 不适用（登录不在 Dart 侧） | **已填满** | 未知（Dart 侧） | **需攻关** |
 | 坚果云 | T-002b 已完成 | Java/Kotlin 主体（2 dex，无加固） | 100.0%（2752/2753） | **已填满** | 静态线索 | **原生登录可行**（静态可行，动态未验证） |
@@ -477,6 +495,7 @@
 > 「登录流程 12 字段」指 `docs/evidence/login-feasibility.md` 第 2 节总表与本节各条目是否写全 12 项，与「可行性结论」是两件事。
 > **夸克与阿里的登录实现不在 Dart 侧**——这一点修正了 T-002d 把四家统一记为「协议需动态分析」的写法。文件业务协议仍在 Dart/jsbridge 侧，T-002d 的结论对文件协议仍成立。
 > 4 个 Flutter 网盘中，天翼/123 的「未知」是技术栈决定的结果，不是本任务遗漏；夸克/阿里的「需攻关」是**已有证据证明依赖闭源 native**，不是资料不足。
+> 百度在 T-006 后由「需攻关」改为「原生登录可行」：三条登录路径均无闭源 native 依赖，剩余仅为服务端行为待动态验证。**这不改写 T-005 的历史 No-Go 结论。**
 
 ## 汇总：资料缺失说明
 

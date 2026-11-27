@@ -4,6 +4,50 @@
 
 ## [未发布]
 
+### T-006 百度网盘原生登录攻关证据与准入复核（2026-11-28）
+
+**结论：百度由「需攻关」改判「原生登录可行（静态可行，动态未验证）」；账号密码 / 短信验证码 / 扫码三条路径分别判为「可独立实现」。硬准入数量 1 → 2，但 T-005 的历史 No-Go 结论不改写、MVP 不锁定、阶段 2 不启动。**
+
+#### 新增
+
+- `docs/evidence/baidu-login-deep-dive.md`（**857 行 / 74746 B**，14 节 + 附录 A/B）：T-006 深度取证报告
+  - 1 任务边界与结论摘要　2 `tpl`/`appSignKey` 来源　3 `di` 40 字段逐项分类
+  - 4 `passport_core` 六 native　5 其他 native 安全组件　6 账号密码路径　7 短信路径　8 扫码路径
+  - 9 Rust 可复刻清单　10 native 移植必要性　11 三路径结论　12 百度整体结论
+  - 13 未解决问题　14 检索命令与复现方式　附录 A 勘误登记　附录 B 可信度分布
+
+#### 修改
+
+- `docs/evidence/login-feasibility.md` v1.0 → **v1.1**（728 → **825 行**，50552 → 60613 B）：§3.2 百度整节改写（新增 3.2.3 签名机制、3.2.6 原 5 项攻关点复核表、17 跳链尾），§2 总表、§4、§5、§6、§7、§8、附录 A/B 全部同步；**其余八家一字未改**
+- `docs/API_FACTS.md` v0.5 → **v0.6**（492 → **511 行**，35759 → 39755 B）：百度节第 3/9/10/12 项重写（含原 4 项攻关点的复核表），总表与全局状态更新；**其他八家未改**
+- `docs/PROVIDERS.md` v0.6 → **v0.7**（267 → **300 行**，21008 → 26378 B）：能力矩阵与登录矩阵百度行同步，§4 后果段更新，新增 **§6.7 T-006 之后的准入变化**
+- `docs/TASKS.md`（1152 → **1231 行**，59797 → 67423 B）：索引表 T-006 → **已完成**，状态行、卡末新增「完成情况（2026-11-28）」含产物表 / 八项工作结果 / 三处修正 + 一处勘误 / 15 项验收核对 / 遗留问题 / 对后续决策的影响，阶段 0 列表更新
+- `docs/RISKS.md` v0.5 → **v0.6**：**R28 拆分**（三家 → 两家，百度移出）；**R5 更新**（补 T-006 的 `di` 定性结论，状态仍「待动态验证」，未关闭）；新增 **R29**（服务端是否接受构造的 `sig`/`di`，静态不可证明）
+
+#### 关键事实（本任务核查所得，全部带 `文件:行号`，详见 deep-dive）
+
+- **`tpl` / `appId` / `appSignKey` 是 APK 硬编码明文常量**，不是运行期注入、不是远程下发：`reverse/baidu/sources/classes15/sources/kd/______.java:11`（appId）/ `:14`（国内 appSignKey）/ `:15`（tpl）/ `:17`（国际 appSignKey），经 `kd/______.java:33-37` → `AccountUtils.E()/K()`（`AccountUtils.java:153-164`）→ `application/___.java:11-19` → `C_.java:196-197` `setProductLineInfo(...)` → `SapiConfiguration.java:854-858`。`DebugSetKey` 覆盖（`kernel/debug/C_.java:82-88`）在 `!NetDiskLog.isDebug()` 时恒返回 null → **release 包无运行期覆盖来源**。**文档不记录常量取值。**
+- **签名真正在子类**：基类 `com/baidu/pass/http/HttpHashMap.java:7-8` 的 `doSign(String)` **是空方法**（baksmali 反汇编确认方法体仅 `return-void`）；实现是 `classes4/.../httpwrap/HttpHashMapWrap.java:9-15`，**全仓唯一调用点** `HttpClientWrap.java:86-88`；算法为 `SapiUtils.java:135-160` 的「排序 + `key=URLEncoder.encode(v)&` 拼接 + `sign_key=` + MD5 hex」，**纯 Java**。
+- **`di` 40 字段全部定性**：必需 22 / 条件 2 / 可选 16（合计 40，与 `SapiDeviceInfo.java:13-56` 的 `getCookiesKeyList()` 数量一致）。16 个「可选」位全部是官方自己也填空串的占位（`getWifiInfo`/`getIMEI`/`getIccid`/`getLocalIpAddress` 方法体就是 `return ""`）。`mPrivacyParamesRegulation=false`（`C_.java:199` 实参）使 `getGrayControlParams()` 在第二道闸门即返回空数组（`ParamsUtil.java:114-159`）→ **`dt_params` 灰度裁剪实际不生效**；唯一仍动态的是服务端下发的 `diExceptIndex`（`SapiOptions.java:62` 默认空）。加密为 `AES/CBC/NoPadding` + 16 字符硬编码 key + MD5 校验尾（`SapiDeviceInfo.java:189-203`），**全在 Java 侧**。
+- **`passport_core` 不构成阻断**：`PassCoreVHelper.java:5-7` 加载，`:9-19` 六个无参 native；全 dex **仅 7 处调用（5 文件）**，**三条主链 0 处**；`nm -D libpassport_core.so` 恰 6 个 `Java_` 导出、**无 `JNI_OnLoad`**、`RegisterNatives` 0 命中 → 静态注册、无隐藏方法；缺失时 `SapiConfiguration.java:553-575` 有 `catch (Throwable)` 兜底，`build()` 仍成功。`getAesKey` 反汇编显示密钥是 `.rodata` 硬编码常量经库内解密，**不是服务端下发**。
+- **其他 6 个安全 native 库均不经过登录路径**：`libnetdisk-security.so`（业务 API URL 加签，唯一调用 `ex/n3.java:49`，上游是 okhttp 拦截器 `ex/m1.java:294`）、`libnetdisk-signature-check.so`（APK 签名校验，`CertVerifier.java:38`）、`libnetdisk-security-rand.so`（业务 API `rand`，`ServerApiKt.java:23` 注册的拦截器）、`libsofiresec.so`（运行时动态下载，只服务 `di` 索引 34，有纯 Java 兜底）、`libmsaoaidsec.so`（MSA OAID）、`libjni-kernel/kservice.so`（P2P / 下载加速）。
+- **扫码路径是三条件里依赖最少的**：`QrCodeService.java` 全文 `HttpHashMapWrap` 0 命中（**不加 `sig`**）、`getDeviceInfo` 0 命中（**不发 `di`**）、三个请求 cookie 传 null，且 `getQrLoginResult`（`:354-364`）的 `bduss` **允许为空** → **不依赖任何既有登录态**。
+- **账号密码路径的 `di` 不在 body**，只经 `ParamsUtil.buildNaCookie` 的 `DVIF` cookie 传递（`ParamsUtil.java:75-79`）；短信路径的 `di` 才在 body（`SapiAccountRepository.java:267-270`）。
+- **账号密码响应是纯 XML 解析**（`SapiCoreUtil.java:68-77` 正则取 `<client>…</client>` + `XmlPullParser`），**不是 WebView**；落库是本地 AES 加密 JSON + CookieManager 写 `BDUSS`/`PTOKEN`（`SapiContext.java:978-1016`）。
+
+#### 与 T-005 结论的关系（只陈述，不改写）
+
+- T-005 判 No-Go 的直接依据是「硬准入数量 1 < 门槛 2」。本任务后数量为 **2**，**形式上满足判据**。
+- **但**：①T-005 的历史 No-Go 结论不改写；②是否重跑 Go/No-Go 由用户决定；③即使转 Go 也不等于用户已选定 MVP 组合；④两个「可行」不同质——坚果云的人机验证依赖腾讯闭源 Web 服务（R27），百度不依赖任何闭源 native，重跑前应先统一「原生登录可行」的判定口径。
+- `docs/evidence/mvp-go-no-go.md:239` 原写「`tpl`/`appSignKey` 由运行时 `setProductLineInfo` 注入…静态不可得」，**已被本任务推翻**；该文件属 T-005 历史产物，**本次不改写**，只在 deep-dive 附录 A 登记勘误。
+
+#### 本次未做的事（边界）
+
+- 未登录任何真实百度账号，未发送任何真实请求，未抓包。
+- 未移植、复制或集成任何官方闭源 so；未新增 Gradle / Cargo 依赖；未改 Android / Kotlin / Rust / UniFFI 架构；**未产生 ADR**（不需要）。
+- **未取证「获取短信验证码」的接口**（T-006 范围只到「已拿到验证码之后」的登录步骤）。
+- 未逆向 `libfire.so` / `libsofiresec.so` 的内部算法（只判关联）。
+
 ### T-005 Go/No-Go 决策与后续网盘攻关计划（2026-11-28）
 
 **结论：No-Go。当前不锁定两个 MVP 网盘，不启动阶段 2 单网盘 Provider 实现。**
