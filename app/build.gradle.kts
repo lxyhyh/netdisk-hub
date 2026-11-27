@@ -148,7 +148,10 @@ val cargoNdkBuild = tasks.register<CargoNdkBuildTask>("cargoNdkBuild") {
     )
     androidAbis.set(nativeAbis)
     rustDir.set(rustProjectDir.asFile.absolutePath)
-    outputDir.set(layout.buildDirectory.dir("rustJniLibs"))
+    // outputDir 不在这里 set：通过 androidComponents 的
+    // addGeneratedSourceDirectory 接入时，AGP 会用 convention 指定输出目录，
+    // 并自动建立 merge*JniLibFolders → cargoNdkBuild 的任务依赖。
+    // 手动 set 会覆盖 convention，反而丢掉这层依赖声明。
     // 由 AGP 自己解析 ndkVersion 对应的目录，避免和 rust.yml 里的路径写法分叉：
     // 这里取到的就是 $ANDROID_HOME/ndk/30.0.16248370。
     ndkHome.set(androidComponents.sdkComponents.ndkDirectory.map { it.asFile.absolutePath })
@@ -179,6 +182,17 @@ androidComponents {
             // outputDir 不在这里设：AGP 的 addGeneratedSourceDirectory 会把它
             // 注入到 variant 专用的 build/generated 子目录，提前设会被覆盖反而误导。
         }
+        // jniLibs 也必须走 addGeneratedSourceDirectory：只往 sourceSets 里塞路径，
+        // Gradle 9 会在 merge*JniLibFolders 上抛「uses this output without declaring
+        // an explicit or implicit dependency」的校验错误（第 3 轮 CI 实测）。
+        // 这里接进来之后，merge*JniLibFolders 会自动依赖 cargoNdkBuild。
+        val jniLibs = variant.sources.jniLibs
+        if (jniLibs != null) {
+            jniLibs.addGeneratedSourceDirectory(cargoNdkBuild, CargoNdkBuildTask::outputDir)
+        } else {
+            throw GradleException("变体 " + variant.name + " 没有 jniLibs 源目录")
+        }
+
         val kotlinSources = variant.sources.kotlin
         if (kotlinSources != null) {
             kotlinSources.addGeneratedSourceDirectory(
@@ -223,13 +237,6 @@ android {
         }
     }
 
-    sourceSets.getByName("main") {
-        // cargoNdkBuild 的产物目录，作为 jniLibs 源目录参与打包。
-        // srcDir(Any) 在 AGP 9.3.1 已废弃（CI 日志 w: 'fun srcDir' is deprecated），
-        // 改用 directories: MutableSet<String>，写入绝对路径字符串。
-        jniLibs.directories.add(layout.buildDirectory.dir("rustJniLibs").get().asFile.absolutePath)
-    }
-
     buildFeatures {
         compose = true
     }
@@ -246,12 +253,6 @@ android {
     }
 
 }
-
-// jniLibs 的源目录来自 build/ 下的任务产物，AGP 不知道这个依赖关系，
-// 必须显式把 merge*NativeLibs 挂到 cargoNdkBuild 后面。
-// 写在 android {} 外面：里面的隐式接收者是 ApplicationExtension，靠外部 Project 兜底容易踩坑。
-tasks.matching { it.name.startsWith("merge") && it.name.endsWith("NativeLibs") }
-    .configureEach { dependsOn(cargoNdkBuild) }
 
 // AGP 9 移除了 android.kotlinOptions，必须用顶层 kotlin 块
 kotlin {
