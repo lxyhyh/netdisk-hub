@@ -1,8 +1,8 @@
 # 接口事实库（API_FACTS）
 
-- 状态：草案 v0.4
-- 产出任务：T-001（T-002a 更新资料定性 / T-002b 填入坚果云 / **T-002d 填入百度 + 四个 Flutter 网盘壳确认**）
-- 最后更新：2026-11-27
+- 状态：草案 **v0.5**
+- 产出任务：T-001（T-002a 资料定性 / T-002b 坚果云 / T-002d 百度 + 四个 Flutter 网盘壳确认 / **T-002c 九个网盘登录可行性判定**）
+- 最后更新：2026-11-28
 
 ## 记录格式
 
@@ -15,15 +15,16 @@
 
 ## 全局说明
 
-**当前状态（T-002d 后）：2 个网盘有完整静态反编译线索（坚果云、百度），4 个网盘完成壳确认、协议覆盖为 0（天翼、123、夸克、阿里），3 个网盘资料缺失（蓝奏、UC、迅雷）。**
+**当前状态（T-002c 后）：9 个网盘的原生登录可行性已全部判定——可行 1 个（坚果云）、需攻关 3 个（百度、夸克、阿里）、未知 2 个（天翼、123）、不可行 3 个（蓝奏、UC、迅雷）。**
 
 原因：
 
-- 坚果云（T-002b）与百度（T-002d）是 `Java/Kotlin 主体`，协议在 dex 里，反编译有实际价值；
-- 天翼、123、夸克、阿里是 `Flutter 主体`，业务逻辑编译进 `libapp.so`（Dart AOT），静态反编译只能拿到壳，**这是技术栈决定的上限，不是遗漏**；
-- 蓝奏、UC、迅雷按 T-001 拍板记为资料缺失。
+- 坚果云（T-002b）与百度（T-002d）是 `Java/Kotlin 主体`，协议在 dex 里，登录链路可完整读出；差别在于坚果云只有 Base64，百度有设备指纹与风控 SDK。
+- 夸克、阿里虽然由 Flutter 承载**文件业务**，T-002c 定向反编译确认**账号登录体系完整存在于 dex 的 Java 层**（夸克 `UCLoginServiceImpl` + MTOP；阿里 `com/ali/user/mobile` + Havana/login4android），所以登录协议可读；两者都被阿里聚安全 native 阻断请求签名。
+- 天翼、123 的 dex 只有 3/4 个壳桩类、**0 条登录线索**，业务在 `libapp.so`（Dart AOT），天翼另有爱加密整包载荷 → 属技术栈决定的上限，不是遗漏。
+- 蓝奏、UC、迅雷按 T-001 拍板记为资料缺失，按 `docs/SCOPE.md` 第 6 节兜底，不攻关。
 
-对照文件：`docs/evidence/index-坚果云.md`、`docs/evidence/index-百度.md`、`docs/evidence/index-天翼.md`、`docs/evidence/index-123云盘.md`、`docs/evidence/index-夸克.md`、`docs/evidence/index-阿里云盘.md`。
+对照文件：`docs/evidence/login-feasibility.md`（T-002c 判定总表 + 逐网盘证据）、`docs/evidence/index-坚果云.md`、`docs/evidence/index-百度.md`、`docs/evidence/index-天翼.md`、`docs/evidence/index-123云盘.md`、`docs/evidence/index-夸克.md`、`docs/evidence/index-阿里云盘.md`。
 
 **重要区分**：
 
@@ -40,9 +41,26 @@
 
 ---
 
-### 登录流程字段（每个网盘必填）
+### 登录流程字段（每个网盘必填 12 项）
 
-见下方各网盘条目的「登录流程」小节。
+每个网盘的「登录流程」小节按下列顺序写全 12 项，**字段不得删除**；确实未知的写「未知」并解释原因。
+
+| # | 字段 | 取值 |
+|---|---|---|
+| 1 | 登录类型 | 账号密码 / 短信验证码 / 扫码 / 混合 / OAuth / 其他 / 未知 |
+| 2 | 是否可在 APP 内原生完成 | 是 / 否 / 未知 |
+| 3 | 会话换取方式 | 官方客户端接口 / OAuth / 仅网页端 / 未知 |
+| 4 | 是否需要 OAuth 或 WebView 才能完成 | 是 / 否 / 未知 |
+| 5 | 扫码登录 token 来源 | 客户端协议 / WebView 抓取 / 未知 |
+| 6 | token 刷新机制 | 有 / 无 / 未知 |
+| 7 | token 有效期 | 具体时长 / 未知 |
+| 8 | 依据 | 类#方法 + 文件:行号 / 官方资料 |
+| 9 | 登录可行性结论 | 原生登录可行 / 需攻关 / 不可行 / 未知 |
+| 10 | 若需攻关 | 签名 / 设备指纹 / 版本校验 / TLS 指纹 / native 注入 / 其他 |
+| 11 | 若不可行 | 原因及证据 |
+| 12 | 若未知 | 缺失的关键证据及下一步需要的资料 |
+
+四类结论的边界与判定细则见 `docs/evidence/login-feasibility.md` 第 1 节。
 
 ---
 
@@ -55,24 +73,28 @@
 
 ### 登录流程
 
-- 登录类型：**账号密码 / 短信校验**（静态可见 sapi2 SDK 的密码登录与短信校验页面）；**扫码登录未发现独立实现** → 待确认
-- 是否可在 APP 内原生完成：**APP 内自带原生登录页**（`classes4/sources/com/baidu/sapi2/newlogin/activity/` 下 5 个 Activity）；能否脱离百度 App 生态独立复刻 → **待确认（属 T-002c）**
-- 会话换取方式：静态可见凭据字段 `bduss`/`uid`/`ptoken`/`stoken`（`classes2/sources/com/baidu/sapi2/SapiAccount.java:5-40`），**换取接口路径未定位** → 待确认
-- 是否需要 OAuth 或 WebView 才能完成：密码/短信走原生页；`https://openapi.baidu.com/oauth/2.0/token` 常量存在（`SapiAccountRepository.java:1119`）但用途 → 待确认
-- 扫码登录 token 来源：**未发现**（`qrcode/` 只有 `R.java` + `a.java`，无业务实现）
-- token 刷新机制：待确认
-- token 有效期：待确认
-- 依据：`docs/evidence/index-百度.md` §4
-- 登录可行性结论：**未知（属 T-002c，本条目不作判定）**
-- 若需攻关，攻关点：`Sdata` 签名算法（`classes7/sources/hk/__.java:469-475`，实现由注入提供，静态不可得）、`bdstoken = MD5(BDUSS)` 之外的 `sign`/`timestamp` 生成
-- 若不可行，原因及证据：**未判定**
+1. 登录类型：**账号密码 / 短信验证码 / 扫码**（三条通道均有客户端协议；第三方 SSO 与 WebView 容器路径不计入）
+2. 是否可在 APP 内原生完成：**是**。业务侧实际入口 `classes13/sources/com/baidu/netdisk/ui/account/i0.java:369` `passportSDK.startNewNALogin(...)` → `NewLoginActivity` / `NewLoginHalfActivity`（`classes4/sources/com/baidu/sapi2/newlogin/activity/`，搜 WebView/loadUrl 三处均 0 命中）
+3. 会话换取方式：**官方客户端接口**。账号密码 `POST {wap}/wp/api/login`（`SapiAccountRepository.java:2873-2901`，端点 `:1126-1128`）；短信 `POST /v2/sapi/login`（同文件 `:263-298`）；扫码 `GET /v2/api/getqrcode` → `GET /channel/unicast` → `POST /v2/sapi/qrlogin?lp=app`（`QrCodeService.java:314-326 / :387-397 / :367-384`）。返回 `bduss` / `ptoken` / `stoken` / `uid`（`SapiAccountResponse.java:14-20`），落 `sapi_system` 偏好（`SapiContext.java:61-65`）
+4. 是否需要 OAuth 或 WebView 才能完成：**否**。`https://openapi.baidu.com/oauth/2.0/token` 常量（`SapiAccountRepository.java:1111-1121`）只用于 `openConnection()` 取 `getDate()/1000` 当时间戳（`:1102`），不参与鉴权；`grep -rn '.oauth(' classes*/sources/com/baidu/netdisk/` → 0 命中。`web2NativeLogin`（`:2951-3010`）从 cookie 读 BDUSS，属官方内部账号中心通道，**本项目不计为可用路径**
+5. 扫码登录 token 来源：**客户端协议**（`/v2/sapi/qrlogin`，参数 `sign` / `cmd` / `bduss` / `stoken` / `ptoken`），不是 WebView 抓取
+6. token 刷新机制：**无主动刷新**。`SapiAccountManager.java:436` 有 `onBdussExpired` 回调，`SapiAccountRepository.java:2994-2997` 用错误码 400021 表示 bduss 过期（已验证）
+7. token 有效期：**未知**（客户端无过期时间字段）
+8. 依据：`docs/evidence/login-feasibility.md` §3.2（逐跳行号）；`docs/evidence/index-百度.md` §4
+9. 登录可行性结论：**需攻关**
+10. 若需攻关：① `di` 设备指纹，`SapiDeviceInfo.java:205-209 / :189-191 / :193-203 / :82-184` 采 40 个字段（含 IMEI/MAC/包列表/device_uuid），AES 密钥为明文常量（`:8`），**算法可复刻，但字段裁剪受灰度开关控制**；② `tpl` / `appSignKey` 运行期注入（`getUaInfo()` `:198-200`），取值**待确认**；③ 聚安全 / `passport_core`（`PassCoreVHelper.java:4-19` 六个 native），使用点仅 `SapiConfiguration.java:553/562`、`OneKeyLoginSdkCall.java:131-132`、`ShareStorage.java:259/290/352`，**不在账号密码/短信主链**；④ 服务端风控放行强度**待确认**
+11. 若不可行：不适用（无不可行证据）
+12. 若未知：不适用（已定位到可枚举的攻关项，非资料不足）
+
+> **修正 T-002d 的两处**：原写「扫码登录未发现独立实现」「换取接口路径未定位」，T-002c 已在 `QrCodeService.java` 定位到三步扫码客户端协议与 `wapLogin` 端点，两处作废。
+> **Sdata 不影响登录**：`Sdata` 头只在自研网络栈加（`classes6/sources/com/baidu/netdisk/network/c.java:126` 等 3 处，且 `c.java:105-130` 条件是 `!isHttps && !whitelist`）；sapi2 链路（`com/baidu/pass/http/a.java`）只设 UA 与 Content-Type，在 `classes2`/`classes12` 的 sapi2 目录搜 `Sdata` → 0 命中。Sdata 签名实现仍是**确定缺口**（`hk/__.java:469-475` 纯转发 `Function2.invoke`，`.n0(Function2` 静态调用方 0 命中），但它**不属于登录链路**，本文不写成已还原。
 
 ### 待确认问题
 
 - `Sdata` 的 HMAC 实现注入点（`hk/__.G` 的 `Function2` 由谁赋值）？
 - `RequestCommonParams` 的 User-Agent / 设备参数真实值？
 - token 刷新与过期策略？
-- 扫码登录是否存在（dex 内未发现）？
+- ~~扫码登录是否存在（dex 内未发现）？~~ **已关闭**：T-002c 定位到 `QrCodeService.java` 三步扫码客户端协议（getqrcode → /channel/unicast → /v2/sapi/qrlogin）
 - 服务端是否接受 `Range`（客户端已在 `np0/d.java:21`、`np0/r.java:208`、`np0/s.java:139` 发送）？
 - `app_id` 常量（`classes2/sources/ew/C_.java:29` 初值为 null，由 `:82` 运行期注入）真实值？
 - 是否存在验证码或风控挑战（`libnetdisk-security.so` 等 6 类风控 SDK 的参与度）？
@@ -100,17 +122,18 @@
 
 ### 登录流程
 
-- 登录类型：**未知**（dex 内 0 条线索）
-- 是否可在 APP 内原生完成：**未知**
-- 会话换取方式：**未知**
-- 是否需要 OAuth 或 WebView 才能完成：**未知**
-- 扫码登录 token 来源：**未知**
-- token 刷新机制：**未知**
-- token 有效期：**未知**
-- 依据：`docs/evidence/index-天翼.md`（壳确认，无协议事实）
-- 登录可行性结论：**未知（属 T-002c，本条目不作判定）**
-- 若需攻关，攻关点：需动态抓包 + Dart AOT 分析；`libsecurity.so`(21528 B)、`libexecmain.so`(215640 B) 职责未验证
-- 若不可行，原因及证据：**未判定**
+1. 登录类型：**未知**（dex 仅 3 个壳桩类，login/auth 类名命中 0、URL 命中 0）
+2. 是否可在 APP 内原生完成：**未知**
+3. 会话换取方式：**未知**
+4. 是否需要 OAuth 或 WebView 才能完成：**未知**
+5. 扫码登录 token 来源：**未知**
+6. token 刷新机制：**未知**
+7. token 有效期：**未知**
+8. 依据：`docs/evidence/login-feasibility.md` §3.5；`docs/evidence/index-天翼.md`（壳确认，协议覆盖 0）
+9. 登录可行性结论：**未知（需动态分析）**
+10. 若需攻关：不适用（尚未到可枚举攻关点的阶段）
+11. 若不可行：不适用（**无任何证据表明必须走 OAuth/WebView**，不得判不可行）
+12. 若未知：缺失 ①登录接口路径与字段（在 `libapp.so` Dart AOT 内）②请求签名机制（`libsecurity.so` 21528 B 职责未验证）③会话 token 结构与刷新 ④客户端环境校验（UA / 版本 / 指纹 / TLS pin）⑤爱加密载荷运行期解密流程（`ijiami.dat` 22378961 B + `ijiami.ajm` 10890680 B + `libexecmain.so` 215640 B / `libexec.so` 765648 B 职责未验证）。下一步需：动态抓包 + 爱加密脱壳 + Dart AOT 分析
 
 ### 待确认问题
 
@@ -139,17 +162,20 @@
 
 ### 登录流程
 
-- 登录类型：**未知**
-- 是否可在 APP 内原生完成：**未知**
-- 会话换取方式：**未知**
-- 是否需要 OAuth 或 WebView 才能完成：**未知**
-- 扫码登录 token 来源：**未知**
-- token 刷新机制：**未知**
-- token 有效期：**未知**
-- 依据：`docs/evidence/index-夸克.md`（壳确认，无协议事实）
-- 登录可行性结论：**未知（属 T-002c，本条目不作判定）**
-- 若需攻关，攻关点：需 7z 载荷解包 + Dart 快照分析 + 聚安全参与度验证，成本为本批最高
-- 若不可行，原因及证据：**未判定**
+1. 登录类型：**手机号短信验证码**（另有账号密码 `cas.login`；微信/淘宝/支付宝 SSO 属不合格路径，**不计入**）
+2. 是否可在 APP 内原生完成：**是**（登录实现在 dex 的 Java 层：`classes10` 的 `com/ucpro/feature/personal/login` 159 类、`classes7` 的 `com/uc/base/account` 24 类）
+3. 会话换取方式：**官方客户端接口**。`POST {base}/acs.wsg_access`（`classes7/sources/rn0/a.java:6-59`），业务 method 为 `cas.sendSmsCodeForLogin`（`UCLoginServiceImpl.java:232-280`）/ `cas.loginWithSmsCode`（`:190-230`）/ `cas.login`（`:333`）；返回 `service_ticket`（`.../account/service/account/login/e.java:24`）。base URL 三选一，网盘侧为 `https://access-open.quark.cn`（`vn0/a.java:10-15`）
+4. 是否需要 OAuth 或 WebView 才能完成：**否**（`PersonalLoginPresenter.java:167-181` 的 WebView 只用于打开隐私/用户协议，与凭证无关）
+5. 扫码登录 token 来源：**未知**（本轮定向产物中未定位到扫码登录链路）
+6. token 刷新机制：**未知**（`e.java:39` 记录 `expiresIn`，语义未验证）
+7. token 有效期：**未知**
+8. 依据：`docs/evidence/login-feasibility.md` §3.3（逐跳行号）
+9. 登录可行性结论：**需攻关**
+10. 若需攻关：① **请求体 M9 加密是 native**——`com/uc/encrypt/EncryptHelper.java:314-325` `System.loadLibrary("encrypt")`、`:327-359` `SecurityGuardManager.getInitializer().initialize(context)`、`M9EncryptionHandler.java:16/18` `private native byte[] decodeM9/encodeM9`；② **`security_sign` 是聚安全 native**——`.../account/c.java:12-14` → `tn0/a.java:29-43` 取 `getSecureSignatureComp().signRequest(...)`，INPUT 为 `str + "3dsa33@213!!!22"`，requestType=3；③ `client_id="636"` 与 `app_name:qk_clouddrive` 是否硬校验 → 待确认
+11. 若不可行：不适用
+12. 若未知：不适用
+
+> **与 T-002d 的差异（必须保留）**：T-002d 记为「Flutter 主体，协议需动态分析」。T-002c 定向反编译 `classes7`/`classes10`（10505 个 .java）后确认：**网盘文件业务协议仍在 Dart 侧，但账号登录体系完整存在于 dex 的 Java 层**。桥接统计：自家包 `MethodChannel` 仅 2 处（ASR/TTS）、`Plugin` 73 处集中在 webwindow/nezha → 登录不在 Flutter 侧。
 
 ### 待确认问题
 
@@ -176,24 +202,21 @@
 
 ### 登录流程
 
-- 登录类型：**账号密码**（主路径）；另有验证码 / 二次验证分支（可信度：已验证，静态）
-- 是否可在 APP 内原生完成：**是**（无可信 OAuth/WebView 依赖，可信度：已验证，静态）
-- 会话换取方式：`POST /mcmd/loginV2`（无 Query，JSON body），响应返回 `token`/`userName`/`uid`；
-  之后所有请求带 `Authorization: <B64(token)>-<B64(uid)>:<userName>`（可信度：已验证，静态）
-- 是否需要 OAuth 或 WebView 才能完成：**否**（可信度：已验证，静态）
-- 扫码登录 token 来源：**未发现扫码登录接口**。已搜索 `NutstoreApi.java` 全部 @GET/@POST、
-  `connection/w.java` 全部常量、全包 `qr`/`QrCode`/`scan` 关键字 → 无结果（可信度：已验证，静态）
-- token 刷新机制：**无**。凭据落 SQLite（`dao/x.java` 的 `token`/`login_name`/`user_name`/`machine_name`），
-  无 refresh 接口、无定时刷新逻辑；失效由 `AccountExpired` 错误码触发跳登录页（可信度：已验证，静态）
-- token 有效期：**客户端无任何过期时间字段或倒计时**（可信度：已验证，静态）；服务端有效期 → 待确认
-- 依据：`docs/evidence/index-坚果云.md` §4（含逐条 文件:行号）
-- 登录可行性结论：**静态看可行**（账号密码直连，无 OAuth 门槛）。
-  **正式判定留给 T-002c**，本条目不下最终结论
-- 若需攻关，攻关点（均为静态推测，待 T-002c 核实）：
-  - UA 四段拼接 `NutstoreApp-Android-<release>-<model>-<versionName>`（`HttpConfig.java:32-34`）是否为硬校验 → 待确认
-  - `/mcmd/loginV2` 的验证码票证链路（`getLoginCaptchaV2` → `loginV2` 回传 `custom_ticket/exp/sig/reusable`）在异常登录时的触发条件 → 待确认
-  - `tfPasscode` 二次验证字段的启用条件 → 待确认
-- 若不可行，原因及证据：**当前无"不可行"证据**
+1. 登录类型：**账号密码**（主路径）；另有验证码 / 二次验证（`tfPasscode`）分支
+2. 是否可在 APP 内原生完成：**是**。`LoginActivity.java:306` / `:375` → presenter `v2/ui/login/m.java:21` → `v2/ui/login/o.java:35` → `connection/i.java:38-43` → `connection/o.java` 发 HTTP，全链无 WebView
+3. 会话换取方式：**官方客户端接口** `POST /mcmd/loginV2`（常量 `connection/w.java:11`，构造 `:171-196`），body 为 JSON 9 字段 `userName` / `password` / `tfPasscode` / `custom_ticket` / `exp` / `sig` / `reusable` / `ticket` / `randstr`；响应 `token` / `uid` / `username`（`NutstoreRequestHelper$LoginSignupResponse.java:5-7`、`:12-14`），落库 `ja.java:30-60`，后续请求带 `Authorization: <B64(token)>-<B64(uid)>:<userName>`（`HttpConfig.java:36-43`）
+4. 是否需要 OAuth 或 WebView 才能完成：**否**（`grep -rn 'WebView|loadUrl|oauth|OAuth' .../v2/ui/login/` → 0 命中）
+5. 扫码登录 token 来源：**未发现扫码登录**（已搜 `NutstoreApi.java` 全部注解、`w.java` 全部常量、全包 `qr`/`QrCode`/`scan`）
+6. token 刷新机制：**无**。无 refresh 接口、无定时刷新；失效由 `AccountExpired` 错误码跳登录页
+7. token 有效期：**客户端无过期字段**（服务端有效期 → 未知）。**注意区分**：工作区 token 另有一套，`WorkspaceRepository.java:251` 把有效期**写死 14 天**（`System.currentTimeMillis() + 1209600000`），`:199` 有 `access-token/apply` 刷新通道，401 清库（`:145-152`）——该 token 只用于工作区功能，与网盘文件接口的 Authorization 不是同一套
+8. 依据：`docs/evidence/login-feasibility.md` §3.1（逐跳行号）；`docs/evidence/index-坚果云.md` §4
+9. 登录可行性结论：**原生登录可行（静态可行，动态未验证）**
+10. 若需攻关：无阻断项。遗留待确认：UA 四段格式（`HttpConfig.java:32-34`）是否硬校验；`isNeedRealCaptcha()` 触发阈值；腾讯人机验证的 `ticket`/`randstr` 换取方式
+11. 若不可行：不适用（无不可行证据）
+12. 若未知：不适用
+
+> **密码处理**：`nutstore.android.utils.y.H()`（`utils/y.java:124-126`）**只做 Base64，无 MD5/SHA 加盐**（已验证，静态）。
+> **禁止项排除**：唯一第三方介入是腾讯人机验证控件（`LoginActivity.java:152-155`），仅在 `isNeedRealCaptcha()` 为真时出现，**不是授权降级**。
 
 ### 文件操作接口（T-002b 新增静态线索）
 
@@ -247,17 +270,18 @@
 
 ### 登录流程
 
-- 登录类型：**资料缺失**
-- 是否可在 APP 内原生完成：**资料缺失**
-- 会话换取方式：**资料缺失**
-- 是否需要 OAuth 或 WebView 才能完成：**不可判定**
-- 扫码登录 token 来源：**资料缺失**
-- token 刷新机制：**资料缺失**
-- token 有效期：**资料缺失**
-- 依据：现有 APK 为第三方客户端 `com.tooyoung.lanzou` 1.3.4.8，非蓝奏云官方客户端，其登录协议不构成官方协议证据；官方客户端 APK 未提供。
-- 登录可行性结论：**不可行（资料缺失）**
-- 若需攻关，攻关点：不适用 —— 按 T-001 拍板结论不攻关、不硬凑
-- 若不可行，原因及证据：现有 APK 为第三方客户端 `com.tooyoung.lanzou` 1.3.4.8，非蓝奏云官方客户端，其登录协议不构成官方协议证据；官方客户端 APK 未提供。
+1. 登录类型：**未知**（资料缺失）
+2. 是否可在 APP 内原生完成：**未知**（资料缺失）
+3. 会话换取方式：**未知**（资料缺失）
+4. 是否需要 OAuth 或 WebView 才能完成：**未知**（资料缺失）
+5. 扫码登录 token 来源：**未知**（资料缺失）
+6. token 刷新机制：**未知**（资料缺失）
+7. token 有效期：**未知**（资料缺失）
+8. 依据：现有 APK 为第三方客户端 `com.tooyoung.lanzou` 1.3.4.8（4765515 B，1 dex，无加固），**非蓝奏云官方客户端**，其登录协议不构成官方协议证据
+9. 登录可行性结论：**不可行（资料缺失）**
+10. 若需攻关：不适用 —— 按 `docs/SCOPE.md` 第 6 节兜底策略不硬凑、不攻关
+11. 若不可行：第三方客户端协议不等同于官方客户端协议；官方客户端 APK 与网页端资料均未提供。按项目准入规则不进入 MVP
+12. 若未知：不适用（已按资料缺失兜底规则定案，不再作为未知候选）
 
 ### 待确认问题
 
@@ -287,17 +311,18 @@
 
 ### 登录流程
 
-- 登录类型：**未知**
-- 是否可在 APP 内原生完成：**未知**
-- 会话换取方式：**未知**
-- 是否需要 OAuth 或 WebView 才能完成：**未知**
-- 扫码登录 token 来源：**未知**
-- token 刷新机制：**未知**
-- token 有效期：**未知**
-- 依据：`docs/evidence/index-123云盘.md`（壳确认，无协议事实）
-- 登录可行性结论：**未知（属 T-002c，本条目不作判定）**
-- 若需攻关，攻关点：需动态抓包；Dart AOT 静态分析成本高
-- 若不可行，原因及证据：**未判定**
+1. 登录类型：**未知**（dex 仅 4 个壳桩类，login/auth 类名命中 0、URL 命中 0）
+2. 是否可在 APP 内原生完成：**未知**
+3. 会话换取方式：**未知**
+4. 是否需要 OAuth 或 WebView 才能完成：**未知**
+5. 扫码登录 token 来源：**未知**
+6. token 刷新机制：**未知**
+7. token 有效期：**未知**
+8. 依据：`docs/evidence/login-feasibility.md` §3.6；`docs/evidence/index-123云盘.md`（壳确认，协议覆盖 0）
+9. 登录可行性结论：**未知（需动态分析）**
+10. 若需攻关：不适用（尚未到可枚举攻关点的阶段）
+11. 若不可行：不适用（**无任何证据表明必须走 OAuth/WebView**，不得判不可行）
+12. 若未知：缺失 ①登录接口路径与字段（在 `libapp.so` arm64 18219952 B 内）②签名机制 ③token 结构与刷新 ④UA / 版本 / 指纹校验。下一步需：动态抓包 + Dart AOT 分析。**与天翼阻塞点不同**：dex 只有 4 类是因为业务写在 Flutter AOT 里、**不是被整包加密**（未检出 `ijiami.*` / `libDexHelper.so` / `libjiagu*`），入口是「Flutter 侧」而非「脱壳」；但 `libijm-emulator.so` 166360 B 提示可能有运行期反调试/反模拟器，会干扰抓包（来源待确认）
 
 ### 待确认问题
 
@@ -322,17 +347,18 @@
 
 ### 登录流程
 
-- 登录类型：**资料缺失**
-- 是否可在 APP 内原生完成：**资料缺失**
-- 会话换取方式：**资料缺失**
-- 是否需要 OAuth 或 WebView 才能完成：**不可判定**
-- 扫码登录 token 来源：**资料缺失**
-- token 刷新机制：**资料缺失**
-- token 有效期：**资料缺失**
-- 依据：现有 APK 为 UC 浏览器 `com.UCMobile`，UC 网盘功能在浏览器内以 H5 页面提供，不存在独立的客户端登录协议证据；且 UC 浏览器为 Flutter 主体，业务逻辑在 libapp.so，静态反编译 dex 不可得。
-- 登录可行性结论：**不可行（资料缺失）**
-- 若需攻关，攻关点：不适用 —— 按 T-001 拍板结论不攻关、不硬凑
-- 若不可行，原因及证据：现有 APK 为 UC 浏览器 `com.UCMobile`，UC 网盘功能在浏览器内以 H5 页面提供，不存在独立的客户端登录协议证据；且 UC 浏览器为 Flutter 主体，业务逻辑在 libapp.so，静态反编译 dex 不可得。
+1. 登录类型：**未知**（资料缺失）
+2. 是否可在 APP 内原生完成：**未知**（资料缺失）
+3. 会话换取方式：**未知**（资料缺失）
+4. 是否需要 OAuth 或 WebView 才能完成：**未知**（资料缺失）
+5. 扫码登录 token 来源：**未知**（资料缺失）
+6. token 刷新机制：**未知**（资料缺失）
+7. token 有效期：**未知**（资料缺失）
+8. 依据：现有 APK 为 **UC 浏览器** `com.UCMobile` 19.2.8.1564（136173692 B，11 dex，Flutter 主体），UC 网盘功能在浏览器内以 **H5 页面**提供，不存在独立的客户端登录协议证据
+9. 登录可行性结论：**不可行（资料缺失）**
+10. 若需攻关：不适用 —— 按 `docs/SCOPE.md` 第 6 节兜底策略不硬凑、不攻关
+11. 若不可行：不存在独立客户端登录协议；网盘为 H5，意味着登录走网页会话，而网页 cookie 复用是项目明令禁止的路径。**不得因「浏览器里能登录」而改判可行**
+12. 若未知：不适用（已按资料缺失兜底规则定案）
 
 ### 待确认问题
 
@@ -362,17 +388,20 @@
 
 ### 登录流程
 
-- 登录类型：**未知**
-- 是否可在 APP 内原生完成：**未知**
-- 会话换取方式：**未知**
-- 是否需要 OAuth 或 WebView 才能完成：**未知**
-- 扫码登录 token 来源：**未知**
-- token 刷新机制：**未知**
-- token 有效期：**未知**
-- 依据：`docs/evidence/index-阿里云盘.md`（壳确认，无协议事实）
-- 登录可行性结论：**未知（属 T-002c，本条目不作判定）**
-- 若需攻关，攻关点：阿里聚安全（sgmain/sgsecuritybody）参与签名的程度；jsbridge 通道是否暴露文件操作
-- 若不可行，原因及证据：**未判定**
+1. 登录类型：**手机号短信验证码 / 账号密码 / 扫码**（Havana 账号 SDK + 淘宝 login4android；支付宝 SSO 与 cookie 通道属不合格路径，**不计入**）
+2. 是否可在 APP 内原生完成：**是**（登录实现在 dex 的 Java 层：`classes11` 的 `com/alicloud/databox/account/login` 40 类 + `havana` 41 类，`classes9` 的 `com/ali/user/mobile` 246 类）
+3. 会话换取方式：**官方客户端接口（MTOP）**。接口名明文在 `classes9/sources/com/ali/user/mobile/rpc/ApiConstants.java:66-120`：短信登录 `mtop.taobao.mloginService.smsLogin`(:80) / 发短信 `smsSend`(:73)；账号密码 `com.taobao.mtop.mloginService.login`(:119) 或 `mtop.taobao.alibabaMLoginService.login`(:115)；扫码 `HAVANA_GEN_QR_CODE`(:105) / `HAVANA_LOGIN_BY_QR_CODE`(:106)；登出(:110)。请求构造见 `UserLoginServiceImpl.java:19-34` / `:37-83`、`LoginDataRepository.java:26/87/109/113-116`
+4. 是否需要 OAuth 或 WebView 才能完成：**否**。但 `GET_WAP_LOGIN_COOKIES`(:104) / `GET_ALIPAY_COOKIES`(:99) 属 cookie 通道，**本项目不得使用**
+5. 扫码登录 token 来源：**客户端协议**（Havana 二维码接口族），完整字段未读 → 部分待确认
+6. token 刷新机制：**有**（`LoginViewModel.java` 的 `recheckLoginToken` / `refreshInfo`），具体周期 → 未知
+7. token 有效期：**未知**
+8. 依据：`docs/evidence/login-feasibility.md` §3.4（逐跳行号）
+9. 登录可行性结论：**需攻关**
+10. 若需攻关：① **每个登录请求都注入 `riskControlInfo`**——`com/ali/user/mobile/data/LoginComponent.java:127` 与 `:441` 均 `rpcRequest.addParam("riskControlInfo", JSON.toJSONString(SecurityGuardManagerWraper.buildWSecurityData()))`，注册链路 `RegisterComponent.java:59/116/176/196` 同样注入；② MTOP 签名（umt/wua）依赖聚安全——`anet/channel/security/SecurityGuardImpl.java:61-69` 取 `getSecureSignatureComp().signRequest(...)`，`:19` `Class.forName("com.alibaba.wireless.security.open.SecurityGuardManager")`；包内 8 个聚安全 so（`libsgmainso-6.6.240404.so` 1873964 B、`libsgsecuritybodyso-6.6.240404.so` 649484 B 等）；③ `classes18.dex` 的 `AccountRpc` 主类**本轮未反编译** → 待补
+11. 若不可行：不适用
+12. 若未知：不适用
+
+> **与 T-002d 的差异（必须保留）**：T-002d 记为「Flutter 主体（混合），协议需动态分析」。T-002c 定向反编译 `classes9`/`classes11`（4050 个 .java）后确认：**账号登录体系完整存在于 dex 的 Java 层**，只有**文件业务协议**在 Dart / jsbridge 侧。桥接统计：自家包 `MethodChannel` 1 处、`Plugin` 2 处、`jsbridge` 262 处 → 登录不在 Flutter 层。
 
 ### 待确认问题
 
@@ -398,17 +427,18 @@
 
 ### 登录流程
 
-- 登录类型：**资料缺失**
-- 是否可在 APP 内原生完成：**资料缺失**
-- 会话换取方式：**资料缺失**
-- 是否需要 OAuth 或 WebView 才能完成：**不可判定**
-- 扫码登录 token 来源：**资料缺失**
-- token 刷新机制：**资料缺失**
-- token 有效期：**资料缺失**
-- 依据：现有 APK 为迅雷下载器 `com.xunlei.downloadprovider`，云盘只是其中的子模块；且 APK 带 `libDexHelper.so` 加固壳，dex 非 Flutter 但被壳保护，静态反编译拿不到业务逻辑；未提供独立的迅雷云盘客户端。
-- 登录可行性结论：**不可行（资料缺失）**
-- 若需攻关，攻关点：不适用 —— 按 T-001 拍板结论不攻关、不硬凑
-- 若不可行，原因及证据：现有 APK 为迅雷下载器 `com.xunlei.downloadprovider`，云盘只是其中的子模块；且 APK 带 `libDexHelper.so` 加固壳，dex 非 Flutter 但被壳保护，静态反编译拿不到业务逻辑；未提供独立的迅雷云盘客户端。
+1. 登录类型：**未知**（资料缺失）
+2. 是否可在 APP 内原生完成：**未知**（资料缺失）
+3. 会话换取方式：**未知**（资料缺失）
+4. 是否需要 OAuth 或 WebView 才能完成：**未知**（资料缺失）
+5. 扫码登录 token 来源：**未知**（资料缺失）
+6. token 刷新机制：**未知**（资料缺失）
+7. token 有效期：**未知**（资料缺失）
+8. 依据：现有 APK 为**迅雷下载器** `com.xunlei.downloadprovider` 25.2.91.280（199853782 B，1 dex，非 Flutter），云盘只是其中一个子模块；dex 被 `libDexHelper.so` 加固壳保护，静态拿不到业务逻辑；未提供独立的迅雷云盘客户端
+9. 登录可行性结论：**不可行（资料缺失）**
+10. 若需攻关：不适用 —— 按 `docs/SCOPE.md` 第 6 节兜底策略不硬凑、不攻关
+11. 若不可行：无独立云盘客户端；模块边界与协议归属在现有资料下无法确认；dex 被加固壳保护。按项目准入规则不进入 MVP
+12. 若未知：不适用（已按资料缺失兜底规则定案）
 
 ### 待确认问题
 
@@ -432,20 +462,21 @@
 
 ## 汇总：侦察进度
 
-| 网盘 | 静态反编译 | 主体技术栈 | 覆盖率 | 登录流程已填 | 文件接口已填 |
-|---|---|---|---|---|---|
-| 百度网盘 | **T-002d 已完成** | Java/Kotlin 主体 + Flutter 模块 | **100.0000%**（63259/63259） | **静态线索已填（不作可行性判定）** | **静态线索已填（40+ 接口）** |
-| 天翼云盘 | **T-002d 壳确认** | **Flutter 主体** + 爱加密 | 不适用（dex 仅 3 类壳桩） | 未知（无静态证据） | 未知（无静态证据） |
-| 夸克网盘 | **T-002d 壳确认** | **Flutter 主体**（Dart 在 7z 容器内） | 不适用（协议不在 dex） | 未知（无静态证据） | 未知（无静态证据） |
-| 坚果云 | **T-002b 已完成** | Java/Kotlin 主体（2 dex，无加固） | 100.0%（2752/2753） | **静态线索已填** | **静态线索已填** |
-| 蓝奏云 | 不需要 | — | — | 资料缺失 | 资料缺失 |
-| 123云盘 | **T-002d 壳确认** | **Flutter 主体** | 不适用（dex 仅 4 类壳桩） | 未知（无静态证据） | 未知（无静态证据） |
-| UC 网盘 | 不需要 | — | — | 资料缺失 | 资料缺失 |
-| 阿里云盘 | **T-002d 壳确认** | **Flutter 主体（混合：壳+jsbridge+Flutter）** | 不适用（协议主要在 libapp.so） | 未知（无静态证据） | 未知（无静态证据） |
-| 迅雷云盘 | 不需要 | — | — | 资料缺失 | 资料缺失 |
+| 网盘 | 静态反编译 | 主体技术栈 | 覆盖率 | 登录流程 12 字段 | 文件接口 | **登录可行性（T-002c）** |
+|---|---|---|---|---|---|---|
+| 百度网盘 | T-002d 已完成 | Java/Kotlin 主体 + Flutter 模块 | 100.0000%（63259/63259） | **已填满** | 静态线索（40+ 接口） | **需攻关** |
+| 天翼云盘 | T-002d 壳确认 | Flutter 主体 + 爱加密 | 不适用（dex 仅 3 类壳桩） | **已填满（12 项均为未知）** | 未知 | **未知（需动态分析）** |
+| 夸克网盘 | T-002c 定向反编译 classes7/10 | Flutter 承载文件业务；**登录在 Java 层** | 不适用（登录不在 Dart 侧） | **已填满** | 未知（Dart 侧） | **需攻关** |
+| 坚果云 | T-002b 已完成 | Java/Kotlin 主体（2 dex，无加固） | 100.0%（2752/2753） | **已填满** | 静态线索 | **原生登录可行**（静态可行，动态未验证） |
+| 蓝奏云 | 不需要 | — | — | **已填满（资料缺失）** | 资料缺失 | **不可行（资料缺失）** |
+| 123云盘 | T-002d 壳确认 | Flutter 主体 | 不适用（dex 仅 4 类壳桩） | **已填满（12 项均为未知）** | 未知 | **未知（需动态分析）** |
+| UC 网盘 | 不需要 | — | — | **已填满（资料缺失）** | 资料缺失 | **不可行（资料缺失）** |
+| 阿里云盘 | T-002c 定向反编译 classes9/11 | Flutter + jsbridge 承载文件业务；**登录在 Java 层** | 不适用（登录不在 Dart 侧） | **已填满** | 未知（Dart/jsbridge 侧） | **需攻关** |
+| 迅雷云盘 | 不需要 | — | — | **已填满（资料缺失）** | 资料缺失 | **不可行（资料缺失）** |
 
-> 「登录流程已填」只表示**字段是否被静态证据填过**，**不代表可行性已判定**；可行性统一由 T-002c 判定。
-> 4 个 Flutter 网盘的「未知（无静态证据）」是技术栈决定的结果，不是本任务遗漏。
+> 「登录流程 12 字段」指 `docs/evidence/login-feasibility.md` 第 2 节总表与本节各条目是否写全 12 项，与「可行性结论」是两件事。
+> **夸克与阿里的登录实现不在 Dart 侧**——这一点修正了 T-002d 把四家统一记为「协议需动态分析」的写法。文件业务协议仍在 Dart/jsbridge 侧，T-002d 的结论对文件协议仍成立。
+> 4 个 Flutter 网盘中，天翼/123 的「未知」是技术栈决定的结果，不是本任务遗漏；夸克/阿里的「需攻关」是**已有证据证明依赖闭源 native**，不是资料不足。
 
 ## 汇总：资料缺失说明
 
