@@ -1,0 +1,181 @@
+name: rust
+
+# T-002e 第 2 轮：Rust Android 独立交叉编译
+# 目标：Rust 1.100.0 + cargo-ndk 4.1.2 + NDK r30 (30.0.16248370)
+#      产出 arm64-v8a / x86_64 两个 .so 并作为 artifact 下载
+# 本轮不含 UniFFI 绑定、不含 Kotlin 集成、不改 APK 打包流程
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'rust/**'
+      - '.github/workflows/rust.yml'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'rust/**'
+      - '.github/workflows/rust.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: rust-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cross-compile:
+    # 固定 24.04：本轮 NDK 环境依据 Ubuntu 24.04 runner 的实际软件清单设计，
+    # 不依赖 ubuntu-latest 的操作系统迁移状态
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 关键：runner 预装的 ANDROID_NDK_HOME 指向 27.3.13750724。
+      # cargo-ndk 的 NDK 探测顺序里 ANDROID_NDK_HOME 优先
+      # （cargo-ndk 4.1.2 src/cli/mod.rs:119-131），不显式覆盖就会静默用错 NDK。
+      - name: Install and pin Android NDK r30
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(command -v sdkmanager || true)"
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "${ANDROID_HOME:?}" -maxdepth 4 -type f -name sdkmanager | head -n 1)"
+          fi
+          echo "sdkmanager = $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" "ndk;30.0.16248370"
+
+          NDK_DIR="${ANDROID_HOME}/ndk/30.0.16248370"
+          test -d "$NDK_DIR" || { echo "::error::missing $NDK_DIR"; exit 1; }
+
+          NDK_REV="$(grep '^Pkg.Revision' "$NDK_DIR/source.properties" | sed 's/.*= *//')"
+          echo "NDK_DIR = $NDK_DIR"
+          echo "source.properties Pkg.Revision = $NDK_REV"
+          if [ "$NDK_REV" != "30.0.16248370" ]; then
+            echo "::error::NDK revision mismatch: got $NDK_REV, expected 30.0.16248370"
+            exit 1
+          fi
+
+          # 三个变量必须指向同一个完整版本目录（cargo-ndk 会校验一致性并取第一个）
+          {
+            echo "ANDROID_NDK_HOME=$NDK_DIR"
+            echo "ANDROID_NDK_ROOT=$NDK_DIR"
+            echo "ANDROID_NDK=$NDK_DIR"
+          } >> "$GITHUB_ENV"
+
+      - name: Install Rust 1.100.0 with Android targets
+        uses: dtolnay/rust-toolchain@1.100.0
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - name: Install cargo-ndk 4.1.2
+        run: cargo install cargo-ndk --version 4.1.2 --locked
+
+      - name: Verify toolchain versions
+        run: |
+          set -euo pipefail
+          RUSTC_VER="$(rustc -V)"
+          NDK_VER="$(grep '^Pkg.Revision' "${ANDROID_NDK_HOME}/source.properties" | sed 's/.*= *//')"
+          echo "rustc: $RUSTC_VER"
+          echo "cargo: $(cargo -V)"
+          echo "NDK  : $NDK_VER (${ANDROID_NDK_HOME})"
+          case "$RUSTC_VER" in
+            "rustc 1.100.0 "*) ;;
+            *) echo "::error::unexpected rustc: $RUSTC_VER"; exit 1 ;;
+          esac
+          echo "cargo-ndk: $(cargo ndk --version)"
+          cargo ndk --version | grep -q "cargo-ndk 4.1.2" \
+            || { echo "::error::unexpected cargo-ndk version"; exit 1; }
+          if [ "$NDK_VER" != "30.0.16248370" ]; then
+            echo "::error::unexpected NDK revision: $NDK_VER"
+            exit 1
+          fi
+
+      # rust-toolchain.toml 位于 rust/，rustup 从「当前工作目录」向上查找。
+      # 因此在 rust/ 目录内执行 cargo，才能保证该配置真实生效。
+      - name: Verify rust/rust-toolchain.toml takes effect
+        working-directory: rust
+        run: |
+          set -euo pipefail
+          rustup show active-toolchain
+          rustc -V
+          rustc -V | grep -q '^rustc 1.100.0 ' \
+            || { echo "::error::rust-toolchain.toml 未生效"; exit 1; }
+
+      - name: Cross-compile for arm64-v8a and x86_64
+        working-directory: rust
+        run: |
+          set -euo pipefail
+          cargo ndk \
+            -t arm64-v8a \
+            -t x86_64 \
+            -P 31 \
+            -o target/jniLibs \
+            --manifest-path core/Cargo.toml \
+            build --release
+
+      - name: Verify artifacts
+        run: |
+          set -euo pipefail
+          TOOLBIN="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          LIB_DIR="rust/target/jniLibs"
+
+          # 1) 上传目录必须与预期文件清单严格相等（多余、缺失、路径错误都失败）
+          EXPECTED="$(printf '%s\n' arm64-v8a/libnetdiskhub_core.so x86_64/libnetdiskhub_core.so)"
+          ACTUAL="$(cd "$LIB_DIR" && find . -type f | sed 's#^\./##' | LC_ALL=C sort)"
+          echo "--- expected ---"; echo "$EXPECTED"
+          echo "--- actual ---";   echo "$ACTUAL"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::artifact file list mismatch"; exit 1
+          fi
+
+          # 2) 每个 ABI 的 ELF 64-bit 硬性断言
+          for ABI in arm64-v8a x86_64; do
+            F="$LIB_DIR/$ABI/libnetdiskhub_core.so"
+            test -f "$F" || { echo "::error::missing $F"; exit 1; }
+            SIZE="$(stat -c%s "$F")"
+            echo "--- $ABI: $F ($SIZE bytes)"
+            test "$SIZE" -gt 1024 || { echo "::error::$F looks empty ($SIZE bytes)"; exit 1; }
+
+            FILE_OUT="$(file -b "$F")"
+            echo "file: $FILE_OUT"
+            case "$FILE_OUT" in
+              *"ELF 64-bit LSB shared object"*) ;;
+              *) echo "::error::$F is not ELF 64-bit LSB shared object"; exit 1 ;;
+            esac
+
+            READELF="$("$TOOLBIN/llvm-readelf" -h "$F")"
+            echo "$READELF" | grep -E 'Class:|Machine:'
+            echo "$READELF" | grep -q 'Class:[[:space:]]*ELF64' \
+              || { echo "::error::$F Class is not ELF64"; exit 1; }
+
+            "$TOOLBIN/llvm-nm" -D --defined-only "$F" | grep -w netdiskhub_probe \
+              || { echo "::error::netdiskhub_probe not found in $F"; exit 1; }
+          done
+
+          # 3) 架构硬性断言：不只打印，必须匹配
+          "$TOOLBIN/llvm-readelf" -h "$LIB_DIR/arm64-v8a/libnetdiskhub_core.so" \
+            | grep -q 'Machine:[[:space:]]*AArch64' \
+            || { echo "::error::arm64-v8a Machine is not AArch64"; exit 1; }
+          "$TOOLBIN/llvm-readelf" -h "$LIB_DIR/x86_64/libnetdiskhub_core.so" \
+            | grep -q 'Machine:.*X86-64' \
+            || { echo "::error::x86_64 Machine is not X86-64"; exit 1; }
+
+      - name: Check generated libs are git-ignored
+        run: |
+          set -euo pipefail
+          for F in rust/target/jniLibs/arm64-v8a/libnetdiskhub_core.so \
+                   rust/target/jniLibs/x86_64/libnetdiskhub_core.so; do
+            git check-ignore -v "$F"
+          done
+          # 明确断言这两个 .so 不在 Git 跟踪范围内
+          test -z "$(git ls-files -- 'rust/target/**')" \
+            || { echo "::error::generated libs are tracked by git"; git ls-files -- 'rust/target/**'; exit 1; }
+
+      - name: Upload shared libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-android-libs
+          path: rust/target/jniLibs
+          if-no-files-found: error

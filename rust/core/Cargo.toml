@@ -1,0 +1,10 @@
+[package]
+name = "netdiskhub-core"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# cargo-ndk 只复制 crate_types 含 cdylib 的产物；缺失时会显式报错而不是静默通过
+[lib]
+name = "netdiskhub_core"
+crate-type = ["cdylib"]
