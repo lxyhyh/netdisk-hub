@@ -1,10 +1,12 @@
 # 网盘能力矩阵（PROVIDERS）
 
-- 状态：草案 v0.3
-- 产出任务：T-001（T-002a 更新资料定性 / T-002b 填入坚果云静态线索并复核切片建议）
-- 最后更新：2026-11-26
-- 说明：本表为**静态盘点**，除坚果云一行外其余单元格仍为「未知」；所有标注"静态线索"的
-  结论均**来自 APK 反编译，未经真实请求验证**，可信度详见 docs/evidence/index-坚果云.md
+- 状态：草案 v0.4
+- 产出任务：T-001（T-002a 资料定性 / T-002b 坚果云 / **T-002d 百度完整反编译 + 四个 Flutter 网盘壳确认**）
+- 最后更新：2026-11-27
+- 说明：本表为**静态盘点**。有静态线索的只有**坚果云**与**百度网盘**两行（均为 Java/Kotlin 主体）；
+  四个 Flutter 网盘（天翼/123/夸克/阿里）已做壳确认，**协议列仍为「未知」且原因明确**；
+  所有标注"静态线索"的结论均**来自 APK 反编译，未经真实请求验证**。
+  可信度详见 docs/evidence/index-坚果云.md、docs/evidence/index-百度.md 及四份壳确认索引。
 
 ## 1. 状态取值
 
@@ -19,14 +21,14 @@
 
 | # | 网盘 | 状态 | 认证方式 | 列目录 | 下载 | 上传 | 删除/重命名 | 分页 | 限速 | 验证码 | 加固/证书绑定迹象 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 百度网盘 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未发现常见加固特征（20 dex） |
-| 2 | 天翼云盘 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | **Flutter 主体**；`assets/ijm_libexec.so`、`libexecmain.so`、`libsecurity.so` |
-| 3 | 夸克网盘 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | **Flutter 主体**；`libdexloaderuc.so`/`libfakedexuc.so`/`libquarkshell.so`/`libsgmainso-6.7.251102.so` |
+| 1 | 百度网盘 | **侦察中**（T-002d 已产出完整静态索引，未实测） | 静态线索：sapi2 SDK 账号密码/短信，APP 内 5 个原生登录 Activity；**可行性不作判定（T-002c）** | 静态线索：`GET /api/list`（`dir`/`start`/`limit`/`order`/`desc`/`preset`） | 静态线索：`GET /rest/2.0/pcs/file?method=locatedownload`；客户端实现 Range（服务端是否接受待确认） | 静态线索：`precreate` → `superfile2` 分片（4 MiB 起、动态翻倍）→ `create?a=commit`；客户端硬限 4 GiB | 静态线索：`/api/filemanager?opera=rename\|delete\|copy\|move\|import`、`/api/create?a=commit`（建目录） | 静态线索：**offset**（`start` + `limit`，响应无 cursor） | 待确认：客户端无主动限速代码 | 静态线索：人脸/实名结果类存在（`CheckUserFaceIdResult` 等）；具体验证码接口未以明文出现 → 待确认 | **未加壳**；**证书绑定未发现**（百度自研 `HttpURLConnection` 栈用默认 TrustManager）；`network_security_config.xml` 明文流量 true 且 `trust-anchors` 含 `user`；`public static native` 303 处；风控 SDK 6 类（`libnetdisk-security*`/`libbaidusec*`/`libsofiresec`/`libmsaoaidsec`/`libjni-kernel`/`libjni-kservice`） |
+| 2 | 天翼云盘 | **壳确认完成**（协议未知） | 未知（`libapp.so` 内） | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | **Flutter 主体**（`libapp.so` arm64 18138032 B）；**爱加密**：`assets/ijiami.dat` 22378961 B + `ijiami.ajm` 10890680 B + `libijm-emulator.so` + `libijmDataEncryption.so`；dex 仅 10136 B / **3 个壳桩类**；原生库 156 条、双 ABI；`libsecurity.so`(21528)、`libexecmain.so`(215640)、`libexec.so`(765648) 职责未验证 |
+| 3 | 夸克网盘 | **壳确认完成**（协议未知） | 未知（Dart 快照在 7z 容器内） | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | **Flutter 主体但 `libapp.so`/`libflutter.so` 均 1 字节占位**；真载荷 `libkernelu4_uc_7z.so` 15938463 B 是 **7-zip archive**；`libfakedexuc.so` 3125 B 实为 **APK**；`libdexloaderuc.so`/`liblibloaderuc.so` 动态加载；`libquarkshell.so` 297600；阿里聚安全 `libsgmainso-6.7.251102.so` 2990668；dex 12 个/115475 类但属外壳与三方 SDK |
 | 4 | 坚果云 | **侦察中**（T-002b 已完成静态索引，未实测） | 静态线索：`/mcmd/loginV2` 账号密码，密码仅 Base64 不哈希（`HttpConfig.java:36-43`） | 静态线索：`GET /mcmd/getDirV1`，`truncated`+末对象名 marker 分页 | 静态线索：`GET /mcmd/getFile`，无 Range 头（服务端是否支持待确认） | 静态线索：`POST /mcmd/uploadFile` 裸字节流非 multipart，硬限 500 MB，无分片 | 静态线索：`deleteFileV1`/`deleteDirV1`/`renameObjectV1`/`submitMoveV1`/`submitCopyV1` | 静态线索：响应 `truncated` + marker 游标 | 待确认：客户端无主动限速代码，服务端限速未知 | 静态线索：存在 `getCaptchaV2`/`getLoginCaptchaV2`/`getFallbackCaptchaV1` 与 `tfPasscode` 二次验证字段 | 未加固、无证书绑定、无设备指纹采集；字符串 XOR 混淆（155 个解密器 / 4804 处调用） |
 | 5 | 蓝奏云 | **资料缺失** | — | — | — | — | — | — | — | — | 未发现加固特征，但仅有第三方客户端 `com.tooyoung.lanzou`，非官方 |
-| 6 | 123云盘 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | **Flutter 主体**；`assets/ijm_libexec.so`、`assets/ijm_libexecmain.so`、`libijm-emulator.so` |
+| 6 | 123云盘 | **壳确认完成**（协议未知） | 未知（`libapp.so` 内） | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | **Flutter 主体**（`libapp.so` arm64 18219952 B）；dex 仅 13916 B / **4 个壳桩类**；**未检出已知整包加固壳**（无 `ijiami.*`/`libDexHelper`/`libjiagu`），另有 `libijm-emulator.so` 166360 B 来源待确认；原生库 56 条、仅 arm64-v8a |
 | 7 | UC 网盘 | **资料缺失** | — | — | — | — | — | — | — | — | 仅有 UC浏览器 `com.UCMobile`，网盘为浏览器内 H5 |
-| 8 | 阿里云盘 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | **Flutter 主体**；`sgmain`/`sgsecurity`（阿里系风控 SDK） |
+| 8 | 阿里云盘 | **壳确认完成**（协议未知） | 未知（`libapp.so` + jsbridge） | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | 未知 | **Flutter 主体（混合：原生壳 + jsbridge + Flutter）**：`libapp.so` arm64 16794520 B，`flutter_assets` 仅 46 文件/861825 B；dex 25 个/70881 类（`com/alicloud` 15828），命中 `OpenApiRequest`/`OpenApiCreateHandler`/`ALCloudDriveBridge`；**阿里聚安全 8 文件**（`libsgmain.so`/`libsgmainso-6.6.240404.so` 1873964/`libsgsecuritybody*` 等）；无整包加固壳 |
 | 9 | 迅雷云盘 | **资料缺失** | — | — | — | — | — | — | — | — | `libDexHelper.so`；迅雷为下载器，云盘是子模块 |
 
 ### 关于「Flutter 主体」的含义
@@ -39,18 +41,23 @@
 
 | # | 网盘 | 原生登录可行性 | 登录类型 | 状态 |
 |---|---|---|---|---|
-| 1 | 百度网盘 | 未知 | 未知 | 未知 |
-| 2 | 天翼云盘 | 未知 | 未知 | 未知 |
-| 3 | 夸克网盘 | 未知 | 未知 | 未知 |
+| 1 | 百度网盘 | **未知（待 T-002c）** | 未知（静态可见：账号密码 / 短信校验，APP 内有 5 个原生登录 Activity） | 静态线索已填，**可行性未判定** |
+| 2 | 天翼云盘 | **未知（待 T-002c）** | 未知（业务在 `libapp.so`，静态不可读） | 壳确认完成，**协议覆盖 0** |
+| 3 | 夸克网盘 | **未知（待 T-002c）** | 未知（Dart 快照在 7z 容器内） | 壳确认完成，**协议覆盖 0** |
 | 4 | 坚果云 | 未知 | 未知 | 未知 |
 | 5 | 蓝奏云 | **不可行（资料缺失）** | — | **资料缺失**（仅第三方客户端，官方协议无从获取；不硬凑） |
-| 6 | 123云盘 | 未知 | 未知 | 未知 |
+| 6 | 123云盘 | **未知（待 T-002c）** | 未知（业务在 `libapp.so`，静态不可读） | 壳确认完成，**协议覆盖 0** |
 | 7 | UC 网盘 | **不可行（资料缺失）** | — | **资料缺失**（仅浏览器 APK，网盘为 H5；不硬凑） |
-| 8 | 阿里云盘 | 未知 | 未知 | 未知 |
+| 8 | 阿里云盘 | **未知（待 T-002c）** | 未知（业务在 `libapp.so` + jsbridge，静态不可读） | 壳确认完成，**协议覆盖 0** |
 | 9 | 迅雷云盘 | **不可行（资料缺失）** | — | **资料缺失**（下载器内子模块，需先拆模块；不硬凑） |
 
-> **注（T-002b 后）**：坚果云的静态登录线索（`/mcmd/loginV2` 字段、验证码接口、凭据落库）
-> 已写入 `docs/evidence/index-坚果云.md` §4。**登录可行性判定属于 T-002c**，本表暂不填。
+> **注（T-002d 后）**：坚果云的静态登录线索（`/mcmd/loginV2` 字段、验证码接口、凭据落库）
+> 已写入 `docs/evidence/index-坚果云.md` §4；百度的静态登录线索（sapi2 SDK、5 个原生登录 Activity、`sapi_system` 持久化）
+> 已写入 `docs/evidence/index-百度.md` §4。**登录可行性判定统一属于 T-002c，本表一律不填。**
+>
+> 四个 Flutter 网盘（天翼/123/夸克/阿里）的登录列写「未知」不是本任务遗漏：
+> 业务逻辑在 `libapp.so`（Dart AOT）或 7z 容器内，dex 侧没有任何登录线索。
+> 这四行的「状态」列已注明「壳确认完成，协议覆盖 0」以区分「没做」与「做了但拿不到」。
 
 ### 列定义
 
@@ -101,8 +108,11 @@
 
 只有 4 个：**坚果云、百度网盘、蓝奏云、迅雷**。
 其中蓝奏云与迅雷已判定"资料缺失"，因此实际可用的是 **坚果云 + 百度网盘**。
+这两个都已产出完整索引（覆盖率分别 100.0% 与 100.0000%）。
 
-其余 5 个（天翼、123、夸克、阿里、UC）都是 Flutter 主体，静态反编译价值低。
+其余 5 个（天翼、123、夸克、阿里、UC）都是 Flutter 主体，静态反编译价值低；
+其中天翼/123/夸克/阿里已完成 T-002d 的壳确认（见 `docs/evidence/index-*.md`），
+确认结果是：**dex 侧确实没有网盘协议**，此判断已由实测证据支撑，不再是推测。
 
 ## 6. 纵向切片建议
 
@@ -152,6 +162,24 @@
 | C | 坚果云 | 123云盘（Flutter，但体积小、结构简单） | 123 侧同样无接口证据 |
 
 > **本节只陈述复核到的事实，不替 T-005 做决策。**
+
+### 6.4 T-002d 后的补充（2026-11-27）
+
+T-002d 完成了两件事，直接影响本节的支撑状况：
+
+| 组合中的一方 | T-002b/T-002d 前 | T-002d 后 |
+|---|---|---|
+| 百度网盘（组合 B 的另一方） | 「资料在手但未反编译」 | **已完成完整反编译**：覆盖率 100.0000%（63259/63259），40+ 接口清单，`docs/evidence/index-百度.md` |
+| 天翼云盘（组合 A 的一方） | 「尚未侦察，认证方式未知」 | **壳确认完成，协议覆盖 0**：Flutter 主体 + 爱加密载荷，dex 仅 3 个壳桩类。**不是没做，是做了也拿不到** |
+| 123云盘（组合 C 的一方） | 「同样无接口证据」 | **壳确认完成，协议覆盖 0**：Flutter 主体，dex 仅 4 个壳桩类 |
+
+**结论（只陈述事实）**：
+
+- 组合 **A**（天翼 + 坚果云）的天翼侧，已由 T-002d 实测确认**没有静态可得的接口证据**，进阶段 2 前必须先做动态分析（抓包 + Dart AOT），成本显著高于静态路线；
+- 组合 **B**（坚果云 + 百度网盘）的双方现已**都具备完整静态索引**，是当前**唯一一个两个网盘都能静态落地**的组合；
+- 组合 **C**（坚果云 + 123云盘）的 123 侧与天翼同因（Flutter 主体），同样需要动态分析。
+
+> 本节仍不下结论；MVP 锁定由 **T-005** 完成。上述内容只是把 T-002d 的事实补进来，供 T-005 直接引用。
 
 > **收口状态（2026-11-26 登记）：** 6.1 与 6.2 的矛盾（「天翼是否 Flutter 主体」）已登记为风险 **R22**，
 > 收口动作归属 **T-005 Go/No-Go 决策**（该任务需锁定 MVP 网盘组合，正好覆盖本节）。

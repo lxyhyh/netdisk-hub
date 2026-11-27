@@ -4,6 +4,49 @@
 
 ## [未发布]
 
+### T-002d 百度完整反编译 + 四网盘壳确认（2026-11-27）
+
+#### 新增
+
+- `docs/evidence/index-百度.md`（43508 B / 590 行）：百度网盘完整静态索引，按 `index-template.md` v2.1 的 11 节 + 附录 A/B/C
+  - §1 APK 元数据 + 主体技术栈判定（**Java/Kotlin 主体 + Flutter 模块共存**）
+  - §2 反编译工具与「单次全量失败」证据；§2.1 覆盖率 **100.0000%**（63259/63259，missing 0）
+  - §3 双 HTTP 链路（自研 HttpURLConnection + OkHttp3/Retrofit2）、§3.2 域名常量表
+  - §4 认证（sapi2 SDK、5 个原生登录 Activity、`sapi_system` 持久化，**不判定可行性**）
+  - §5 文件列表（`/api/list`，分页 = **offset**）、§6 上传（`precreate` → `superfile2` 分片 4 MiB 起 → `create?a=commit`，硬限 4 GiB）
+  - §7 下载（`locatedownload`，客户端已实现 Range）、§8.2 **接口清单统一表**（五组 40+ 行，全带调用点行号）
+  - §9 加固核查（未加壳、**证书绑定未发现**、`network_security_config` 信任用户 CA、303 处 native）+ §9.1 风控 SDK 6 类
+- `docs/evidence/index-天翼.md`（10940 B / 205 行）：壳确认模式，爱加密载荷 + 3 个壳桩类，协议覆盖 **0**
+- `docs/evidence/index-123云盘.md`（8069 B / 182 行）：壳确认模式，4 个壳桩类，协议覆盖 **0**
+- `docs/evidence/index-夸克.md`（11176 B / 193 行）：壳确认模式，**7z 容器 + 1 字节占位 so + 假 dex APK**，协议覆盖 **0**
+- `docs/evidence/index-阿里云盘.md`（10304 B / 187 行）：壳确认模式，混合架构 + 阿里聚安全 8 文件，协议覆盖 **0**
+
+#### 修改
+
+- `docs/API_FACTS.md` v0.3 → **v0.4**：重写百度条目（登录流程 11 字段 + 待确认 + 已知线索 + 证据路径）；
+  天翼/夸克/123/阿里四条改为壳确认结论（协议字段一律「未知」并说明原因）；汇总表新增「覆盖率」列，
+  并把 Flutter 四行的「登录流程已填/文件接口已填」改为「未知（无静态证据）」
+- `docs/PROVIDERS.md` v0.3 → **v0.4**：能力矩阵百度行填满静态线索、四个 Flutter 网盘行改「壳确认完成（协议未知）」；
+  登录能力矩阵四行改「未知（待 T-002c）」并加注壳确认状态；§5 资料覆盖说明实测结论；新增 §6.4（T-002d 对切片建议的影响）
+- `docs/TASKS.md`：T-002d 状态改**已完成**，索引表同步；新增「完成情况（2026-11-27）」小节（产物表 / 反编译过程 /
+  四网盘壳确认对比 / 关键结论 / 17 项验收核对 / T-002c 启动条件核对）；T-002c 状态补「启动条件已满足，等待用户确认」
+- `docs/evidence/apk-inventory.md`：补「T-002d 实测修正」表——百度改「Java/Kotlin 主体 + Flutter 模块共存」、
+  天翼 versionCode 1112 → **638**、minSdk 21 → **24**；§6 反编译状态改为「部分完成」并列出 2 个完整 + 4 个壳确认 + 3 个不反编译
+- `CHANGELOG.md` 本条
+
+#### 说明
+
+- 单次全量 jadx 反编译 182 MB dex **在本机失败**（-Xmx5g，进度 46% 时被系统内存压力终止）；
+  改为按 dex 分批（`-Xmx3g -Xss2m`）后才完成。失败日志保留在 `reverse/baidu/jadx-full.log`
+- 覆盖率口径新增两条要求（已写入 index-百度 §2.1，并建议回填模板）：识别 jadx 改名注释
+  `/* JADX INFO: renamed from: */` 与 `p000` 非法包名前缀；不识别会得出 941 个假缺失
+- 中途 25 个类报 `DONT_GENERATE`，需加 `--no-inline-anonymous --no-inline-kotlin-lambda` 才能 `--single-class` 补出
+- **未判定任何网盘的登录可行性**（属 T-002c）；未对 Flutter 网盘深挖 `libapp.so`；未做动态分析；
+  未新增依赖、未改架构/Gradle/Rust/CI；`reverse/` 未进 Git
+
+---
+
+
 ### T-001 建立项目控制面（2026-11-26）
 
 #### 新增

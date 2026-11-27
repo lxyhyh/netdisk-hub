@@ -1,9 +1,9 @@
 # APK 清单（apk-inventory）
 
-- 产出任务：T-001（初版）/ T-002a（合并附件区完整清单）/ T-002b（更新反编译状态）
+- 产出任务：T-001（初版）/ T-002a（合并附件区完整清单）/ T-002b（更新反编译状态）/ **T-002d（更新百度 Flutter 判定与天翼 versionCode）**
 - 盘点时间：2026-11-26
 - 盘点方式：`aapt dump badging` / `unzip -l` / `sha256sum`，**仅静态读取，未反编译**
-- 反编译状态：**已开始** —— T-002b 完成坚果云一个（见 `docs/evidence/index-坚果云.md`），其余 8 个未反编译
+- 反编译状态：**部分完成** —— 坚果云（T-002b）与百度网盘（T-002d）已完整反编译并产出索引；天翼 / 123 / 夸克 / 阿里已完成壳确认（T-002d，协议覆盖 0）；蓝奏 / UC / 迅雷资料缺失不反编译
 
 ## 0. 汇总
 
@@ -22,7 +22,7 @@
 
 | 文件 | 大小(字节) | 包名 | 版本 | minSdk/targetSdk | 对应网盘 |
 |---|---|---|---|---|---|
-| `cloud189_v11.1.2.apk` | 387095539 | `com.cn21.ecloud` | 11.1.2（vc 1112） | 21 / 30 | 天翼云盘 |
+| `cloud189_v11.1.2.apk` | 387095539 | `com.cn21.ecloud` | 11.1.2（vc **638**） | **24 / 30** | 天翼云盘 |
 
 sha256：`9491addb8c1a6471e4efc10c10df069978a7e780ba39d2f7a82996c6be1412fa`
 
@@ -86,7 +86,7 @@ base.apk 的 compileSdkVersion=35，targetSdkVersion=35，minSdkVersion=23。
 | 迅雷 | 1 | ❌ | `libDexHelper.so`×2（娜迦/加固壳） | 下载器，云盘是子模块 |
 | 坚果云 | 2 | ❌ | **无加固迹象**（仅 `libBugly_Native.so`、`libEncryptorP.so`、`libmupdf_java.so`） | 最小、最易侦察 |
 | 蓝奏云 | 1 | ❌ | **无加固迹象**（仅 `libluajava.so`、`libmd5.so`） | 第三方客户端 |
-| 百度网盘 | 20 | ❌ | 未见常见加固壳特征 | `.apks` 分包 |
+| 百度网盘 | 20 | ❌ | 未见常见加固壳特征 | `.apks` 分包；**注意**：base.apk 内无 `lib/`，Flutter 运行时在 `split_config.arm64_v8a.apk` 内（见 §3.1） |
 
 ### 3.1 Flutter 判定含义（重要）
 
@@ -96,7 +96,21 @@ base.apk 的 compileSdkVersion=35，targetSdkVersion=35，minSdkVersion=23。
 **jadx / apktool 反编译 dex 拿不到网盘协议。** 静态反编译对这些网盘只能得到：
 入口壳、原生桥接方法名、插件注册表、资源文件。
 
-坚果云、蓝奏云、迅雷、百度网盘 **是 Java/Kotlin 主体**，静态反编译有实际价值。
+坚果云、蓝奏云、迅雷 **是 Java/Kotlin 主体**，静态反编译有实际价值。
+
+**T-002d 实测修正（2026-11-27）**
+
+| 网盘 | 原判定 | 实测 | 修正后 |
+|---|---|---|---|
+| 百度网盘 | Java/Kotlin 主体（非 Flutter） | base.apk 内 `lib/` **0 个**，但 `split_config.arm64_v8a.apk` 内有 `libflutter.so` 11036664 B + `libapp.so` 20972464 B，且 `assets/flutter_assets/` 1510 个文件 | **Java/Kotlin 主体 + Flutter 模块共存**（dex 侧仍是协议主战场） |
+| 天翼云盘 | vc 1112 / minSdk 21 | `aapt dump badging` 实测 | **vc 638 / minSdk 24** |
+| 天翼云盘 | 「Flutter 主体，有壳」 | 解包实测 | Flutter 主体 + **爱加密**（`assets/ijiami.dat` 22378961 B + `ijiami.ajm` 10890680 B），dex 仅 10136 B / **3 个壳桩类** |
+| 123云盘 | 「Flutter 主体，有壳」 | 解包实测 | Flutter 主体，dex 仅 13916 B / **4 个壳桩类**；**未检出** `ijiami.*` 载荷 |
+| 夸克 | 「Flutter 主体」 | 解包实测 | Flutter 主体，但 `libapp.so` 与 `libflutter.so` **均为 1 字节占位**；真载荷 `libkernelu4_uc_7z.so` 15938463 B 是 **7-zip 容器** |
+| 阿里云盘 | 「Flutter 主体」 | 解包实测 | Flutter 主体 **混合架构**（原生壳 + jsbridge + Flutter），dex 25 个 / 70881 类，`com/alicloud` 15828 |
+
+> 结论：Flutter 判定本身没错，但「百度非 Flutter」不完整、「天翼 vc 1112」是错的。
+> 详细的壳确认证据见 `docs/evidence/index-天翼.md` / `index-123云盘.md` / `index-夸克.md` / `index-阿里云盘.md`。
 
 ---
 
@@ -150,7 +164,9 @@ base.apk 的 compileSdkVersion=35，targetSdkVersion=35，minSdkVersion=23。
 |---|---|---|
 | T-002a（本文件） | ✅ 完成 | 附件区 8 个 APK + 根目录 1 个 APK 全部登记 |
 | T-002b | ✅ 完成（2026-11-26） | 只反了坚果云 1 个，跑通索引格式；见 `docs/evidence/index-坚果云.md` |
-| 其余 8 个 | ⏸ 未反编译 | 等 T-002b 格式评估的改动落地后再批量执行 |
+| T-002d（百度完整反编译） | ✅ 完成（2026-11-27） | 覆盖率 **100.0000%**（63259/63259）；见 `docs/evidence/index-百度.md` |
+| T-002d（四个 Flutter 网盘壳确认） | ✅ 完成（2026-11-27） | 天翼 / 123 / 夸克 / 阿里，协议覆盖 **0**（技术栈决定） |
+| 其余 3 个 | ⏸ 不反编译 | 蓝奏云 / UC 网盘 / 迅雷云盘，已判定资料缺失 |
 
 **已反编译的网盘**：
 
@@ -159,7 +175,14 @@ base.apk 的 compileSdkVersion=35，targetSdkVersion=35，minSdkVersion=23。
   - 工具：jadx 1.5.7（见 `docs/evidence/tooling.md`）
   - 加固：无。证书绑定：无。字符串 XOR 混淆：155 个解密器 / 4804 处调用
 
-**未反编译的 8 个**：百度网盘、天翼云盘、夸克网盘、123云盘、阿里云盘（5 个有资料但未动手）；
-蓝奏云、UC 网盘、迅雷云盘（3 个已判定资料缺失，不需要反编译）。
+**已完整反编译的网盘（2 个）**：
+
+- 坚果云 `nutstore.android` v4.26.5 → `reverse/nutstore/sources/`（8006 个 .java，约 67 MB），覆盖率 100.0%；
+- 百度网盘 `com.baidu.drive.app` 13.11.15 → `reverse/baidu/sources/`（约 1.2 GB，按 dex 分批产出），覆盖率 **100.0000%**（63259/63259）。
+
+**已做壳确认的网盘（4 个）**：天翼云盘、123云盘、夸克网盘、阿里云盘 —— 均为 Flutter 主体，协议覆盖 0，
+  详见 `docs/evidence/index-天翼.md`、`index-123云盘.md`、`index-夸克.md`、`index-阿里云盘.md`。
+
+**不做反编译的网盘（3 个）**：蓝奏云、UC 网盘、迅雷云盘（已判定资料缺失）。
 
 产物统一放 `reverse/<网盘名>/`（已在 .gitignore）
