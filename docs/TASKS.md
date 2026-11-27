@@ -1,6 +1,6 @@
 # 任务卡（TASKS）
 
-- 最后更新：2026-11-27（T-002e 第 1 轮完成归档：最小 Android 工程 + APK 打包已在 CI 跑通）
+- 最后更新：2026-11-27（T-002e 第 2 轮完成归档：Rust Android 独立交叉编译已在 CI 跑通）
 - 一个任务一节
 
 ## 编号索引
@@ -12,7 +12,7 @@
 | T-002b | 反编译 1 个 APK 跑通索引格式 | 0 | 已完成 |
 | T-002c | 各网盘登录流程侦察与可行性判定 | 0 | 待启动（依赖 T-002d） |
 | T-002d | 反编译百度 + Flutter 网盘壳确认 | 0 | 待启动 |
-| T-002e | GitHub Actions CI 基础设施搭建 | 1 前置 | 进行中（第 1 轮完成，第 2/3 轮待启动） |
+| T-002e | GitHub Actions CI 基础设施搭建 | 1 前置 | 进行中（第 1、2 轮完成，第 3 轮待启动） |
 | T-003 | UniFFI 构建链最小化集成验证 | 1 前置 | 待启动（依赖 T-002e） |
 | T-004 | CRAP / 变异测试工具兼容性复核 | 1 前置 | 待启动（依赖 T-002e） |
 | T-005 | Go/No-Go 决策与 MVP 网盘锁定 | 0 | 待启动 |
@@ -404,7 +404,7 @@ reverse/ 目录用于存放反编译资料（不进 Git）。
 ## T-002e GitHub Actions CI 基础设施搭建
 
 **阶段**：阶段1前置
-**状态**：进行中（第 1 轮完成，第 2/3 轮待启动）
+**状态**：进行中（第 1、2 轮完成，第 3 轮待启动）
 **依赖**：GitHub 公开仓库已创建并首次 push 完成
 **优先级**：高于 T-003 / T-004
 
@@ -505,10 +505,59 @@ reverse/ 目录用于存放反编译资料（不进 Git）。
 **未验证 / 待确认**：KGP 精确版本号 2.4.21 未在 CI 日志明文打印（结论为推论链，见
 `ci-setup.md` §6.3）；Rust 交叉编译、UniFFI 绑定、Kotlin↔Rust 调用、真机安装运行均未开始。
 
-**第 2 / 3 轮**：待启动。第 2 轮目标为 `rust/` + `.github/workflows/rust.yml`，
+**第 2 轮**：已完成（见下节「第 2 轮完成情况」）。产物为 `rust/` + `.github/workflows/rust.yml`，
 cargo-ndk 产出 arm64-v8a 与 x86_64 的 `.so`；不涉及 UniFFI 与 Kotlin 集成，不改 APK 打包流程。
 
+**第 3 轮**：待启动。目标为 UniFFI 绑定生成 + Kotlin 集成。
+
 **证据归档**：`docs/evidence/ci-setup.md`（runner 环境、依赖版本、产物核验、已知警告、已验证/未验证清单）。
+
+### 第 2 轮完成情况（Rust Android 独立交叉编译）
+
+**状态**：已完成（2026-11-27 归档，commit `b8e1b08`）
+
+| 项 | 实测值 |
+|---|---|
+| commit | `b8e1b0898cabf6b273d17c8f01f69292d9de73c5` |
+| commit message | `build: add standalone Rust Android cross-compilation workflow` |
+| CI 运行 | https://github.com/lxyhyh/netdisk-hub/actions/runs/45938734221 |
+| 运行 ID / workflow | `45938734221` / `rust` |
+| 结果 | **success**（触发 2026-11-27T04:14:03Z → 完成 2026-11-27T04:15:08Z，总 1 分 05 秒） |
+| 工具链实测 | Rust **1.100.0** / Cargo **1.100.0** / cargo-ndk **4.1.2** / NDK **30.0.16248370** |
+| ABI | `arm64-v8a`、`x86_64` |
+| 产物 | `rust-android-libs`（Artifact ID `15172320101`，zip 379922 B） |
+
+**本轮新增的工程文件（5 个）**：`rust/Cargo.toml`、`rust/core/Cargo.toml`、`rust/core/src/lib.rs`、
+`rust/rust-toolchain.toml`、`.github/workflows/rust.yml`。
+
+**交叉编译产物（CI 内 `Verify artifacts` 步骤硬断言，非人工目测）**
+
+| ABI | target | 文件 | 大小 | ELF Class | Machine | 导出符号 |
+|---|---|---|---|---|---|---|
+| arm64-v8a | `aarch64-linux-android` | `libnetdiskhub_core.so` | 449560 B | ELF64 | AArch64 | `netdiskhub_probe` |
+| x86_64 | `x86_64-linux-android` | `libnetdiskhub_core.so` | 424656 B | ELF64 | Advanced Micro Devices X86-64 | `netdiskhub_probe` |
+
+**关键结论**
+
+1. Rust → Android 交叉编译链路独立可跑通，不依赖 Android 工程与 APK 打包流程。
+2. `rust/rust-toolchain.toml` **确实生效**：CI 日志原文
+   `1.100.0-x86_64-unknown-linux-gnu (overridden by '.../rust/rust-toolchain.toml')`。
+3. NDK 版本被显式钉死在 `30.0.16248370`：runner 预置的 `ANDROID_NDK_HOME` 指向 27.3.13750724，
+   workflow 用三个变量（`ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT` / `ANDROID_NDK`）同时覆盖，
+   并在构建前 assert `source.properties` 的 `Pkg.Revision`。
+4. Artifact 解压后**无多余根目录**，正好两个文件：`arm64-v8a/libnetdiskhub_core.so` 与
+   `x86_64/libnetdiskhub_core.so`。
+5. 同一 push 触发的 Android `build` workflow（run `45938734219`，59 秒）也 success，
+   构成既有 Android 构建的回归验证，未因新增 `rust/**` 而回退。
+
+**未完成（保留）**
+
+- UniFFI 绑定生成：未开始
+- Kotlin ↔ Rust 调用：未开始
+- `.so` 集成进 APK：未开始
+- 真机安装运行：未验证
+
+**证据归档**：`docs/evidence/ci-setup.md` §10（本轮完整实测记录）。
 
 ---
 
@@ -633,7 +682,7 @@ CI 全绿视为通过；CI 失败项需记录失败原因和回退方案。
 
 ## 阶段 1 前置
 
-- **T-002e GitHub Actions CI 基础设施搭建（待启动，优先级最高）**
+- **T-002e GitHub Actions CI 基础设施搭建（进行中：第 1、2 轮完成，第 3 轮待启动，优先级最高）**
 - **T-003 UniFFI 构建链最小化集成验证（待启动，依赖 T-002e）**
 - **T-004 CRAP / 变异测试工具兼容性复核（待启动，依赖 T-002e）**
 
