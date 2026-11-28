@@ -235,6 +235,10 @@ android {
         ndk {
             abiFilters += nativeAbis
         }
+
+        // T-003：Android 运行时测试（仪器测试）用 AndroidX Test 的 runner。
+        // 只跑在设备/模拟器上，宿主机 JVM 测试不能替代（.so 与 JNA 只有真机才加载得起来）。
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildFeatures {
@@ -272,4 +276,10 @@ dependencies {
     // 必须带 @aar：普通 jar 里没有 jni/<abi>/libjnidispatch.so，运行期注册必失败。
     // 版本在 gradle/libs.versions.toml 的 [versions].jna 锁定。
     implementation("net.java.dev.jna:jna:" + libs.versions.jna.get() + "@aar")
+
+    // T-003 / T-103：仪器测试依赖。见 docs/ADR/ADR-005-android-instrumentation-test.md。
+    // 断言只用 JUnit4 内置 org.junit.Assert，不引 MockK / Mockito / Espresso。
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.core)
 }

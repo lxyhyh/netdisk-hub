@@ -210,6 +210,125 @@ jobs:
           fi
           echo "OK: zipalign 报告 Verification successful"
 
+      # ---- T-003：真实 Android 运行时验证 ----
+      # 目标：在 x86_64 模拟器上真实加载 libnetdiskhub_core.so 与 libjnidispatch.so，
+      # 跑通 UniFFI 调用链。宿主机 cargo test 不能代替（用户明确要求）。
+      # 不用第三方 Action：全部走官方 sdkmanager / avdmanager / emulator / adb，
+      # 避免引入未经批准的第三方依赖，失败时日志也都在本 workflow 里。
+
+      - name: Enable KVM access
+        run: |
+          set -euo pipefail
+          if [ ! -e /dev/kvm ]; then
+            echo "::error::/dev/kvm 不存在，GitHub 托管 runner 应自带 KVM 加速设备"
+            exit 1
+          fi
+          sudo chmod 666 /dev/kvm
+          ls -l /dev/kvm
+          grep -cE 'vmx|svm' /proc/cpuinfo || true
+
+      - name: Install emulator and x86_64 system image
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(command -v sdkmanager || true)"
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME" -maxdepth 4 -type f -name sdkmanager | head -n 1)"
+          fi
+          echo "sdkmanager = $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          # 选 x86_64：APK 里本来就有 x86_64 版 libnetdiskhub_core.so，
+          # 正好验证真实 ABI 的原生库加载；android-37.0 的 google_apis（非 ps16k）镜像最稳。
+          "$SDKMANAGER" "emulator" "platform-tools" "system-images;android-37.0;google_apis;x86_64"
+          ls "$ANDROID_HOME/system-images/android-37.0/google_apis"
+          # 直接管道到 head 会让 emulator 收到 SIGPIPE，配合 pipefail 会误判失败
+          "$ANDROID_HOME/emulator/emulator" -version > /tmp/emu-version.txt 2>&1 || true
+          head -n 3 /tmp/emu-version.txt
+
+      - name: Create AVD
+        run: |
+          set -euo pipefail
+          AVDMANAGER="$(command -v avdmanager || true)"
+          if [ -z "$AVDMANAGER" ]; then
+            AVDMANAGER="$(find "$ANDROID_HOME" -maxdepth 4 -type f -name avdmanager | head -n 1)"
+          fi
+          echo "avdmanager = $AVDMANAGER"
+          echo "no" | "$AVDMANAGER" create avd -n netdiskhub-t003 \
+            -k "system-images;android-37.0;google_apis;x86_64" --force
+          "$AVDMANAGER" list avd
+
+      - name: Run Android instrumented tests on emulator
+        timeout-minutes: 45
+        run: |
+          set -euo pipefail
+          EMULATOR="$ANDROID_HOME/emulator/emulator"
+          ADB="$ANDROID_HOME/platform-tools/adb"
+          mkdir -p /tmp/emu
+          "$EMULATOR" -accel-check || true
+          "$EMULATOR" -avd netdiskhub-t003 \
+            -no-window -no-audio -no-boot-anim -no-snapshot \
+            -gpu swiftshader_indirect -accel on -camera-back none -camera-front none \
+            > /tmp/emu/emulator.log 2>&1 &
+          EMU_PID=$!
+          echo "emulator pid = $EMU_PID"
+          "$ADB" start-server
+          "$ADB" wait-for-device
+          # 只看 wait-for-device 会在 init 阶段就通过，必须再等 sys.boot_completed
+          BOOTED=0
+          for i in $(seq 1 240); do
+            if ! kill -0 "$EMU_PID" 2>/dev/null; then
+              echo "::error::模拟器进程提前退出"
+              tail -n 200 /tmp/emu/emulator.log
+              exit 1
+            fi
+            if [ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
+              BOOTED=1
+              echo "boot completed after $i 次轮询"
+              break
+            fi
+            sleep 5
+          done
+          if [ "$BOOTED" -ne 1 ]; then
+            echo "::error::模拟器 20 分钟内没有完成启动"
+            tail -n 200 /tmp/emu/emulator.log
+            exit 1
+          fi
+          "$ADB" shell input keyevent 82 || true
+          "$ADB" shell settings put global window_animation_scale 0 || true
+          "$ADB" shell settings put global transition_animation_scale 0 || true
+          "$ADB" shell settings put global animator_duration_scale 0 || true
+          echo "sdk = $("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
+          echo "abi = $("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
+          "$ADB" logcat -c || true
+          set +e
+          # pipefail 已开：管道的退出码就是 gradle 的退出码，必须紧接着取值，
+          # 中间插任何命令都会把 $? 覆盖掉
+          gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace 2>&1 | tee /tmp/emu/gradle-test.log
+          TEST_RC=$?
+          set -e
+          "$ADB" logcat -d -v threadtime > /tmp/emu/logcat.txt || true
+          "$ADB" shell pm list packages | grep netdiskhub || true
+          mkdir -p app/build/emulator-artifacts
+          cp -f /tmp/emu/emulator.log /tmp/emu/gradle-test.log app/build/emulator-artifacts/ || true
+          cp -f /tmp/emu/logcat.txt app/build/emulator-artifacts/ || true
+          echo "connectedDebugAndroidTest exit code = $TEST_RC"
+          exit "$TEST_RC"
+
+      # 只「跑完不报错」不够：必须证明用例数、零失败、零跳过，
+      # 且 T-003 十项与 T-103 十二项的用例名都出现在结果里。
+      - name: Verify instrumented test results
+        run: python3 scripts/verify-android-test-results.py
+
+      - name: Upload instrumented test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-instrumented-test-reports
+          path: |
+            app/build/reports/androidTests/**
+            app/build/outputs/androidTest-results/**
+            app/build/emulator-artifacts/**
+          if-no-files-found: warn
+
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
