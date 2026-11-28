@@ -1,6 +1,6 @@
 # 任务卡（TASKS）
 
-- 最后更新：2026-11-28（**T-101 / T-102 完成**：统一 Provider 接口（模型 / 认证输入 / 不透明会话 / 十类统一错误 / 九项操作 / UniFFI 句柄导出）与两个行为不同的 MockProvider 已落地，Rust 单元测试 12 个全绿（含同一套契约测试对两个实现各跑一遍），CI 新增 Rust 测试步骤且 Android 构建与双 ABI 检查未受影响。<br>此前：2026-11-28（**T-006 最终一致性校正完成**：`t_cuid`/`t_appname` 字段来源更正（索引 38/39 曾写反）、`i()` 已确认进入最终请求、`sf_zid` 七分支与 62 位常量已闭环、验证码 WebView 与坚果云 R27 统一口径并新增「A 密码路径同样存在 50052 挑战分支」；三路径档位不变（A 可行 / B 需攻关 / C 可行）；T-005 历史 No-Go 未改写、MVP 未锁定、未启动阶段 2。<br>此前：2026-11-28（**T-006 补充收口完成**：`libbaiduprotect_sec.so` 已闭环、短信发码已取证但 **B 路径降级为「需攻关」**、扫码 `hostDeviceId` 已闭环为「官方不生成」、`cuid` 官方算法已定位；百度整体仍判「原生登录可行」但成立路径收窄为 A/C；T-005 历史 No-Go 未改写、MVP 未锁定。<br>此前：2026-11-28（T-006 完成：百度改判「原生登录可行（静态可行，动态未验证）」，硬准入数量 1 → 2；T-005 的历史 No-Go 结论未改写、MVP 未锁定；此前 T-002c / T-002d / T-005 完成、T-002e 第 3 轮已归档）
+- 最后更新：2026-11-28（**T-003 / T-103 完成**：仪器测试在 CI 真实跑通 —— `build` run 46150707856 于 API 36 模拟器上 22 条用例全绿（T-003 十项 + T-103 十二项），APK 产物已下载核验；期间记录 android-37 镜像 RegionSampling 崩溃与三条测试自身缺陷的修复。<br>此前：2026-11-28（**T-101 / T-102 完成**：统一 Provider 接口（模型 / 认证输入 / 不透明会话 / 十类统一错误 / 九项操作 / UniFFI 句柄导出）与两个行为不同的 MockProvider 已落地，Rust 单元测试 12 个全绿（含同一套契约测试对两个实现各跑一遍），CI 新增 Rust 测试步骤且 Android 构建与双 ABI 检查未受影响。<br>此前：2026-11-28（**T-006 最终一致性校正完成**：`t_cuid`/`t_appname` 字段来源更正（索引 38/39 曾写反）、`i()` 已确认进入最终请求、`sf_zid` 七分支与 62 位常量已闭环、验证码 WebView 与坚果云 R27 统一口径并新增「A 密码路径同样存在 50052 挑战分支」；三路径档位不变（A 可行 / B 需攻关 / C 可行）；T-005 历史 No-Go 未改写、MVP 未锁定、未启动阶段 2。<br>此前：2026-11-28（**T-006 补充收口完成**：`libbaiduprotect_sec.so` 已闭环、短信发码已取证但 **B 路径降级为「需攻关」**、扫码 `hostDeviceId` 已闭环为「官方不生成」、`cuid` 官方算法已定位；百度整体仍判「原生登录可行」但成立路径收窄为 A/C；T-005 历史 No-Go 未改写、MVP 未锁定。<br>此前：2026-11-28（T-006 完成：百度改判「原生登录可行（静态可行，动态未验证）」，硬准入数量 1 → 2；T-005 的历史 No-Go 结论未改写、MVP 未锁定；此前 T-002c / T-002d / T-005 完成、T-002e 第 3 轮已归档）
 - 一个任务一节
 
 ## 编号索引
@@ -13,12 +13,13 @@
 | T-002c | 各网盘登录流程侦察与可行性判定 | 0 | **已完成** |
 | T-002d | 反编译百度 + Flutter 网盘壳确认 | 0 | **已完成** |
 | T-002e | GitHub Actions CI 基础设施搭建 | 1 前置 | 进行中（第 1、2、3 轮完成；test / quality-gate workflow 未做） |
-| T-003 | UniFFI 构建链最小化集成验证 | 1 前置 | 待启动（依赖 T-002e） |
+| T-003 | UniFFI 构建链最小化集成验证 | 1 前置 | **已完成**（七项验证均由 CI 实测） |
 | T-004 | CRAP / 变异测试工具兼容性复核 | 1 前置 | 待启动（依赖 T-002e） |
 | T-005 | Go/No-Go 决策与 MVP 网盘锁定 | 0 | **已完成（No-Go）** |
 | T-006 | 百度网盘原生登录攻关与第二家准入验证 | 0 | **已完成** |
 | T-101 | 定义 UniFFI 深接口（统一 Provider 接口） | 1 | **已完成** |
 | T-102 | 实现 MockProvider（两个假 Adapter 验证 seam） | 1 | **已完成** |
+| T-103 | Kotlin UseCase 层与契约测试 | 1 | **已完成** |
 
 **编号规则**
 
@@ -853,7 +854,7 @@ PASS: 6 个原生库通过 清单 / ELF / PT_LOAD 16 KB 对齐 / GNU_RELRO 官�
 
 **未完成（保留，不标完成）**
 
-- 运行时端到端：`probeMagic()` 的返回值未在设备/模拟器上实际执行过（属 T-003）。
+- 运行时端到端：`probeMagic()` 的返回值未在本轮（T-002e 第 3 轮）实际执行过；该验证已由 **T-003** 于 CI 完成（run 46150707856，见 T-003 完成情况）。
 - `test` workflow（单元测试）与 `quality-gate` workflow（CRAP / 变异）仍未建立。
 - `docs/evidence/ci-setup.md` 的第 3 轮记录见 §11。
 
@@ -864,7 +865,7 @@ PASS: 6 个原生库通过 清单 / ELF / PT_LOAD 16 KB 对齐 / GNU_RELRO 官�
 ## T-003（阶段1前置）：UniFFI 构建链最小化集成验证
 
 - 阶段：1 前置
-- 状态：待启动
+- 状态：**已完成**（2026-11-28）
 - 类型：构建验证（**不做业务逻辑**）
 
 ### 目标
@@ -900,6 +901,113 @@ CI 全绿视为通过；CI 失败项需记录失败原因和回退方案。
 ### 失败回退
 
 先查第三方插件 / UniFFI 任务配置 / Gradle API；**确认为 Gradle 版本问题**才回退到 9.6.1。
+
+### 完成情况（2026-11-28）
+
+CI 实测：`build` run [46150707856](https://github.com/lxyhyh/netdisk-hub/actions/runs/46150707856)，commit `a2a2992`，27 个 step 全部 success，2026-11-28T13:39:38Z → 13:46:25Z（6m47s）。
+
+| 任务卡第 N 项 | CI 证据（原样摘录） | 结论 |
+|---|---|---|
+| 1 uniffi-bindgen 生成 Kotlin 绑定 | `bindings = app/build/generated/kotlin/generateUniffiBindingsDebug/com/netdiskhub/core/netdiskhub_core.kt`、`size = 105856 bytes`、`OK: 绑定含全部通用接口符号，且无凭据字段` | 通过 |
+| 2 Kotlin 2.4.21 编译生成代码 | `Build debug APK` → `BUILD SUCCESSFUL in 1m 45s`；`Verify Kotlin bindings are compiled into the APK` → `OK: dex 含 com.netdiskhub.core 与 probeMagic` | 通过 |
+| 3 Rust 1.100.0 交叉编译到 Android ABI | `Verify toolchain versions` 断言 rustc 1.100.0 通过；`rust` workflow 早前已实测双 ABI 产物 | 通过 |
+| 4 NDK r30 原生库生成 | `ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/30.0.16248370`，`source.properties` 的 `Pkg.Revision` 断言通过 | 通过 |
+| 5 Gradle 自动执行绑定生成和 Rust 编译任务 | 只调 `:app:assembleDebug` 一步，绑定生成与 cargo-ndk 交叉编译自动被触发，无需额外手动命令 | 通过 |
+| 6 APK 中各 ABI 的 `.so` 正确打包 | `Verify APK native libraries` 严格 6 条清单通过；逐库 ELF 64-bit / LOAD 段 `p_align 0x4000` / `Class: ELF64` / `Machine` 断言通过；`zipalign -c -P 16 -v 4` → `Verification successful` | 通过 |
+| 7 Android 设备实际加载并调用 UniFFI 接口 | `Starting 22 tests on netdiskhub-t003(AVD)` → `Finished 22 tests`；`connectedDebugAndroidTest exit code = 0`；`tests=22 failures=0 errors=0 skipped=0` | 通过 |
+
+#### 运行时证据（第 7 项）
+
+- 系统镜像：`system image = system-images;android-36;google_apis;x86_64`
+- 设备启动：`boot completed，第 9 次轮询（约 45 秒）`、`package 服务可用，第 1 次检查`、`60 秒稳定性检查通过`
+- 测试执行：`Starting 22 tests on netdiskhub-t003(AVD) - 16` → `Finished 22 tests on netdiskhub-t003(AVD) - 16`，`BUILD SUCCESSFUL in 27s`，`connectedDebugAndroidTest exit code = 0`
+- 结果校验脚本：`tests=22 failures=0 errors=0 skipped=0` → `OK: 22 条用例全部通过，T-003 十项与 T-103 十二项均在真实设备上执行`
+- 22 条 = T-003 的 10 条（`t01`..`t10`）+ T-103 的 12 条（`providersAreListedGenerically` 等），用例名逐个由 `scripts/verify-android-test-results.py` 断言
+
+#### 产物核验（下载 artifact 后实测，非只看日志）
+
+- `app-debug-apk`：artifact zip 10981630 B，artifact digest `sha256:1283934b3267933c2584a90100320c217adada78283fb6dc9deb1d83571cba83`；解压出的 `app-debug.apk` 30998435 B，`sha256 b8bb7c10e8400ac6ec2bf9822aa3ee2df39c465c4a7ffec7d8d16eb297a28e31`
+- `aapt dump badging`：`package: name='com.netdiskhub.app' versionCode='1' versionName='0.1.0' compileSdkVersion='37'`、`sdkVersion:'31'`、`targetSdkVersion:'37'`
+- `android-instrumented-test-reports`：119250 B，`sha256:b0bf5aff0b7ba80079e2ad9bc0781174dcb6c2a2c02b449d84f76bf9d90fa5ac`，含 `TEST-netdiskhub-t003(AVD) - 16-_app-.xml` 与每个用例的 logcat
+
+#### 第 8–13 次运行的失败与处置（全部有 CI 日志）
+
+| 运行 | 根因 | 处置 |
+|---|---|---|
+| 46144407072 | `androidTest` 里写成 `android.app.InstrumentationRegistry`，编译报 `Unresolved reference` | 改为 `androidx.test.platform.app.InstrumentationRegistry` |
+| 46145446338 | 模拟器起来后 `surfaceflinger` 走 gfxstream GLDMA 路径，`Assertion failed: !rcEnc->featureInfo()->hasReadColorBufferDma` 后 SIGABRT，`system_server` 重启，安装报 `Can't find service: package` | 改软件渲染并关闭 `-Vulkan,-GLDMA,-GLDMA2` |
+| 46147812034 | 稳定性检查里 `adb shell pidof` 返回非 0，在 `set -euo pipefail` 下整条命令替换失败，脚本静默 exit 1 | 取值加 `|| true` 并补空值显式失败分支 |
+| 46148545991 | 关闭 GLDMA 后仍在同一路径崩溃（`RegionSamplingThread` → `GoldfishMapper::readFromHost`） | 按 ADR-005 已写的回退方案把镜像从 API 37 退到 API 36 |
+| 46149743378 | 应用镜像后测试真跑起来：`Bg.call` 把异步异常包成 `ExecutionException`，导致按 `NetdiskException.*` 断言的 3 条用例误判失败；`t01` 按 `/proc/self/maps` 里的 `.so` 文件名断言，而 `extractNativeLibs=false` 时路径列是 APK 路径 | `Bg.call` 解开 `ExecutionException.cause`；`t01` 改为「`.so` 文件名或 base.apk 路径」二者其一即算映射 |
+| **46150707856** | — | **全绿** |
+
+#### 与任务卡约束的对照
+
+- 未声称「本地已编译通过」：本机无 Gradle、无可用 aapt2/NDK 工具链，全部结论取自 CI 日志与下载后的 artifact
+- 「CI 失败项需记录失败原因和回退方案」：上表即记录；唯一实际启用的回退是 API 37 → API 36 镜像，`compileSdk`/`targetSdk` 未降级
+- 未改动 T-003 之外的构建配置；未新增依赖（`androidx.test` 三件套经 ADR-005 与用户批准后引入）
+
+### 尚未覆盖（明确不属于 T-003）
+
+- API 37 特有行为的运行时验证：模拟器镜像退到 API 36，`targetSdk 37` 的 APK 在 API 36 上运行，只覆盖通用行为
+- release 变体的运行时验证（当前只跑 debug）
+- 多设备 / 多 ABI 的真实设备验证（模拟器为 x86_64，arm64 仅验证了 APK 静态打包）
+
+---
+
+## T-103（阶段1）：Kotlin UseCase 层与契约测试
+
+- 阶段：1
+- 状态：**已完成**（2026-11-28）
+- 依赖：T-101、T-102
+- 产出：`app/src/main/kotlin/com/netdiskhub/app/usecase/{ProviderUseCases.kt,UseCaseResult.kt}`、`app/src/androidTest/kotlin/com/netdiskhub/app/{ProviderUseCasesTest.kt,TestSupport.kt}`
+
+### 目标
+
+在 UniFFI 之上建立一层**很薄**的 Kotlin UseCase：把阻塞调用包成统一结果、把 Rust 的十类错误映射成统一错误分类、把不透明会话包装成 Kotlin 句柄。这一层不认识任何具体网盘。
+
+### 设计要点
+
+| 要求 | 落地方式 |
+|---|---|
+| 统一结果 | `UseCaseResult.Success<T>` / `UseCaseResult.Failure`（携带 `UseCaseError(kind, detail)`），调用方不需要 try/catch |
+| 统一错误 | `ErrorKind` 十档与 Rust `NetdiskError` 十类一一对应（`AUTH_FAILED` / `HUMAN_VERIFICATION_REQUIRED` / `RATE_LIMITED` / `NETWORK` / `INVALID_ARGUMENT` / `UNSUPPORTED` / `NOT_FOUND` / `ALREADY_EXISTS` / `INVALID_SESSION` / `INTERNAL`） |
+| 会话不透明 | Kotlin 侧只有 `SessionHandle(handleId, providerId)`；Rust 的 `Session` 对象、token、cookie 都不出现 |
+| 主线程拒绝 | `guarded()` 里检查 `Looper.myLooper() === Looper.getMainLooper()`，命中直接抛 `MainThreadViolationException`（阻塞调用不得在主线程） |
+| 不泄漏凭据 | 只用 Provider 返回的 `detail` 文案，不把入参拼进日志或异常 |
+| 新增网盘不改此层 | `providers()` 走 `providerIds()` 循环，没有任何按网盘 id 的分支 |
+
+### 契约测试（12 条）
+
+| 用例 | 断言内容 |
+|---|---|
+| `providersAreListedGenerically` | 两个 Provider 的 id / displayName / authMethods / supportsCursor 都能通用取出 |
+| `sameCallShapeWorksForBothProviders` | **同一段调用代码**对 Alpha 与 Beta 都能跑通（seam 的运行时证据） |
+| `wrongPasswordBecomesAuthFailedError` | 错误密码 → `AUTH_FAILED`，且 detail 不回显密码 |
+| `betaScanLoginBecomesUnsupportedError` | Beta 扫码 → `UNSUPPORTED`；Alpha 扫码成功 |
+| `pagingWalksAllEntries` | 逐页取完的条目集合与一次性取完完全一致 |
+| `fullFileOperationChain` | mkdir → upload → stat → download → rename → remove 全链路 |
+| `missingPathBecomesNotFound` | 不存在路径 → `NOT_FOUND` |
+| `illegalPathBecomesInvalidArgument` | `..` 路径 → `INVALID_ARGUMENT` |
+| `closedSessionBecomesInvalidSession` | 已关闭句柄再用 → `INVALID_SESSION` |
+| `mainThreadCallsAreRejected` | 主线程调用抛 `MainThreadViolationException` |
+| `unknownProviderBecomesNotFound` | 未知 Provider id → `NOT_FOUND` |
+| `resultAccessorsBehaveAsDocumented` | `valueOrNull` / `errorOrNull` 的语义与文档一致 |
+
+### 验收
+
+- [x] UseCase 层不出现任何具体网盘字段或分支
+- [x] 统一结果与统一错误覆盖 Rust 的十类错误
+- [x] 会话以不透明句柄暴露，token / cookie 不出现在 Kotlin 可见范围
+- [x] 主线程调用被显式拒绝
+- [x] 12 条用例在真实 Android 运行时全部通过
+- [x] 同一段调用代码对两个 Provider 都成立
+
+### 完成情况（2026-11-28）
+
+- CI run [46150707856](https://github.com/lxyhyh/netdisk-hub/actions/runs/46150707856)：12 条 T-103 用例与 10 条 T-003 用例在同一批次 `Starting 22 tests` 内全部通过
+- 用例名由 `scripts/verify-android-test-results.py` 的 `T103` 清单逐个断言，少一条即 CI 失败
+- 修复记录：首轮测试把 `Bg.call` 的 `ExecutionException` 直接当失败抛出，导致按具体异常类型断言的用例误判；已在 `TestSupport.kt` 解开 `cause` 后重抛，测试语义才与生产路径一致
 
 ---
 
@@ -1498,14 +1606,14 @@ A 可独立实现（带条件性人机验证依赖）/ B 需攻关（等用户�
 ## 阶段 1 前置
 
 - **T-002e GitHub Actions CI 基础设施搭建（进行中：第 1、2、3 轮完成，test / quality-gate 待做，优先级最高）**
-- **T-003 UniFFI 构建链最小化集成验证（待启动，依赖 T-002e；构建链部分已由第 3 轮覆盖，剩余为运行时端到端）**
+- **T-003 UniFFI 构建链最小化集成验证（已完成：七项验证全部由 CI 实测，22 条仪器测试在 API 36 模拟器上全绿）**
 - **T-004 CRAP / 变异测试工具兼容性复核（待启动，依赖 T-002e）**
 
 ## 阶段 1：Provider 抽象 + MockProvider
 
 - **T-101 定义 UniFFI 深接口（已完成：通用模型 / 认证输入 / 不透明会话 / 统一错误 / 9 个 Provider 操作 / UniFFI 句柄导出）**
 - **T-102 实现 MockProvider（已完成：MockAlpha + MockBeta 两个实现，同一套契约测试全部通过）**
-- T-103 Kotlin UseCase 层与契约测试
+- **T-103 Kotlin UseCase 层与契约测试（已完成：12 条契约测试与 T-003 十项同批在真实设备上通过）**
 - T-104 CRAP ≤6 与 lint/typecheck/test 门禁接入
 
 ## 阶段 2：单网盘纵向切片

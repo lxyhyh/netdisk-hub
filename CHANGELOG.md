@@ -4,6 +4,47 @@
 
 ## [未发布]
 
+### T-003 / T-103 Android 运行时验证与 Kotlin UseCase 层（2026-11-28）
+
+**结论：UniFFI 构建链的七项验证全部由 CI 实测通过，且 Kotlin UseCase 层与契约测试首次在真实 Android 设备上执行 —— `build` run 46150707856（commit `a2a2992`）27 个 step 全绿，22 条仪器测试（T-003 十项 + T-103 十二项）全部通过，APK 产物已下载核验。T-003 此前只有「构建链通、产物在 APK 里」的静态证据，运行时端到端一直是空白；本批补齐。**
+
+#### 新增
+
+- `app/src/main/kotlin/com/netdiskhub/app/usecase/UseCaseResult.kt`：`Success` / `Failure` 统一结果，`ErrorKind` 十档与 Rust `NetdiskError` 十类一一对应
+- `app/src/main/kotlin/com/netdiskhub/app/usecase/ProviderUseCases.kt`：薄 UseCase 层，`providers` / `openSession` / `closeSession` / `listFiles` / `statFile` / `quota` / `upload` / `download` / `remove` / `rename` / `mkdir` / `close`；会话以不透明 `SessionHandle(handleId, providerId)` 暴露；`guarded()` 拒绝主线程调用并把异常统一转成 `UseCaseResult.Failure`
+- `app/src/androidTest/kotlin/com/netdiskhub/app/TestSupport.kt`：后台线程执行辅助（`Bg.call`）与临时目录辅助
+- `app/src/androidTest/kotlin/com/netdiskhub/app/UniffiRuntimeTest.kt`：T-003 的 10 条运行时用例（`t01`..`t10`）
+- `app/src/androidTest/kotlin/com/netdiskhub/app/ProviderUseCasesTest.kt`：T-103 的 12 条契约用例
+- `scripts/verify-android-test-results.py`：解析 JUnit XML，断言 failures / errors / skipped 全 0、tests ≥ 22、T-003 十项与 T-103 十二项用例名逐个命中
+- `docs/ADR/ADR-005-android-instrumentation-test.md`：仪器测试的依赖选型、模拟器镜像策略与回退方案
+
+#### 修改
+
+- `.github/workflows/build.yml`：新增模拟器安装 / AVD 创建 / 启动与稳定性检查 / `connectedDebugAndroidTest` / XML 校验 / 报告上传共 6 个步骤；系统镜像改为变量 `SYSTEM_IMAGE="system-images;android-36;google_apis;x86_64"`，AVD 步骤改用 `$T003_SYSTEM_IMAGE`
+- `app/build.gradle.kts`：`defaultConfig.testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"`，新增 `androidTestImplementation` 的 `androidx.test:runner:1.7.0` / `androidx.test.ext:junit:1.3.0` / `androidx.test:core:1.7.0`（经 ADR-005 与用户批准）
+- `app/src/androidTest/.../TestSupport.kt` 与 `ProviderUseCasesTest.kt` 的 `InstrumentationRegistry` 导入从 `android.app.*` 修正为 `androidx.test.platform.app.*`
+- `docs/TASKS.md`：索引表 T-003 改已完成并新增 T-103 行；T-003 卡补「完成情况（2026-11-28）」；新增 T-103 任务卡；阶段清单与「未完成」条目同步
+
+#### 修复（均为 CI 实测出的真实问题）
+
+- **`ExecutionException` 没解开**：`Bg.call` 直接用 `Future.get()`，异步体内的 `NetdiskException.*` 被包成 `java.util.concurrent.ExecutionException`，导致 3 条按具体异常类型断言的用例误判失败。修法是在 `Bg.call` 里 `catch (failure: ExecutionException) { throw failure.cause ?: failure }`，并单独处理 `InterruptedException`（恢复中断标志后重抛）。
+- **`t01` 的原生库映射断言口径错**：`extractNativeLibs=false`（minSdk ≥ 23 的默认值）时 Android 直接在 `base.apk` 内 mmap 压缩包里的 `.so`，`/proc/self/maps` 的路径列是 APK 路径而不是 `.so` 文件名，原断言必然失败。改为「映射里有 `libnetdiskhub_core.so` 或映射里有 `applicationInfo.sourceDir`」二者其一即通过，并补一条 `com.sun.jna.Native.VERSION.startsWith("5.")` 断言，确保 jnidispatch 真的加载了而不是库名碰巧出现。
+
+#### 测试环境与产物
+
+- 系统镜像：`system-images;android-36;google_apis;x86_64`（API 37 镜像在这批运行中不可用，见下条）
+- 启动：`boot completed，第 9 次轮询（约 45 秒）`；`package 服务可用，第 1 次检查`；`60 秒稳定性检查通过`
+- 测试：`Starting 22 tests on netdiskhub-t003(AVD) - 16` → `Finished 22 tests`；`connectedDebugAndroidTest exit code = 0`；校验脚本 `tests=22 failures=0 errors=0 skipped=0`
+- Rust 单测同时保持全绿：`running 12 tests` → `test result: ok. 12 passed; 0 failed`
+- APK artifact `app-debug-apk` 10981630 B，digest `sha256:1283934b3267933c2584a90100320c217adada78283fb6dc9deb1d83571cba83`；解压出的 `app-debug.apk` 30998435 B，`sha256 b8bb7c10e8400ac6ec2bf9822aa3ee2df39c465c4a7ffec7d8d16eb297a28e31`
+- 测试报告 artifact `android-instrumented-test-reports` 119250 B，digest `sha256:b0bf5aff0b7ba80079e2ad9bc0781174dcb6c2a2c02b449d84f76bf9d90fa5ac`
+
+#### 说明
+
+- **API 37 模拟器不可用**：`system-images;android-37.0;google_apis;x86_64` 在无 GPU 的 runner 上，`surfaceflinger` 的 `RegionSamplingThread` 会走 gfxstream 的 GLDMA 读宿主 color buffer 路径并 `SIGABRT`（`Assertion failed: !rcEnc->featureInfo()->hasReadColorBufferDma`，栈在 `/vendor/lib64/hw/mapper.ranchu.so` 的 `GoldfishMapper::readFromHost`）。关闭 `-GLDMA,-GLDMA2` 无效。按 ADR-005 预先写好的回退方案把镜像退到 API 36；`compileSdk` / `targetSdk` 保持 37 未降级。**代价是 API 37 特有行为未被运行时覆盖**，已记入 T-003 的「尚未覆盖」。
+- 全程未声称「本地已编译通过」：本机无 Gradle、`/opt/android-sdk` 的 aapt 是 x86_64 二进制在 aarch64 proot 里无法执行，所有构建与测试结论都来自 CI 日志和下载后的 artifact。
+- 本轮其余既有验收未退化：`Build debug APK` / `Verify UniFFI Kotlin bindings` / `Verify APK native libraries`（严格 6 条清单 + 逐库 ELF/LOAD/RELRO 检查）/ `Verify APK zipalign 16 KB` 全部仍为 success。
+- T-004（CRAP / 变异测试工具兼容性复核）与本批无关，状态仍为待启动。
 ### T-101 / T-102 统一 Provider 接口与两个 MockProvider（2026-11-28）
 
 **结论：Rust 核心从「只有 UniFFI 探针」推进到可运行的统一 Provider 抽象，并有 MockAlpha / MockBeta 两个行为不同的实现跑通同一套契约测试。Kotlin 侧只接触通用类型（路径、条目、分页、配额、传输结果、统一错误），会话是不透明对象、不暴露任何 token。`cargo test --workspace --locked` 12 个测试全绿，CI 新增 Rust 测试步骤，Android 构建与双 ABI 检查未受影响。**
