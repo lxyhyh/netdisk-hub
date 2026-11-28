@@ -253,15 +253,24 @@ jobs:
           # 正好验证真实 ABI 的原生库加载；android-37.0 的 google_apis（非 ps16k）镜像最稳。
           "$SDKMANAGER" "emulator" "platform-tools" "system-images;android-37.0;google_apis;x86_64"
           ls "$ANDROID_HOME/system-images/android-37.0/google_apis"
+          # 首跑缺的是系统库 libpulse.so.0；模拟器自身的 Qt/webrtc 等库是随包发布的，
+          # 靠 RPATH $ORIGIN 在运行时解析，ldd 直接扫会全部报 not found，不能拿来当判据。
+          # 所以只断言系统库不缺失，其余交给下一步 emulator -version 的真实加载来证明。
           QEMU="$ANDROID_HOME/emulator/qemu/linux-x86_64/qemu-system-x86_64"
           echo "qemu = $QEMU"
-          # 硬断言：动态库缺一个都不许往下走，否则会在启动阶段静默卡死
-          MISSING="$(ldd "$QEMU" | grep 'not found' || true)"
-          if [ -n "$MISSING" ]; then
-            echo "::error::qemu-system-x86_64 仍缺共享库："
-            printf '%s\n' "$MISSING"
+          SYS_MISSING=0
+          for LIB in libpulse.so.0 libnss3.so libX11.so.6 libGL.so.1; do
+            if ! ldd "$QEMU" 2>/dev/null | grep -q "$LIB"; then
+              echo "::error::qemu-system-x86_64 缺少系统库 $LIB"
+              SYS_MISSING=1
+            fi
+          done
+          if [ "$SYS_MISSING" -ne 0 ]; then
+            echo "---- ldd 全量输出 ----"
+            ldd "$QEMU" || true
             exit 1
           fi
+          echo "OK: 关键系统库均已解析"
           # 直接管道到 head 会让 emulator 收到 SIGPIPE，配合 pipefail 会误判失败，
           # 但也不能用 || true 掩盖真正的加载失败。
           if ! "$ANDROID_HOME/emulator/emulator" -version > /tmp/emu-version.txt 2>&1; then
