@@ -250,9 +250,19 @@ jobs:
           echo "sdkmanager = $SDKMANAGER"
           yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
           # 选 x86_64：APK 里本来就有 x86_64 版 libnetdiskhub_core.so，
-          # 正好验证真实 ABI 的原生库加载；android-37.0 的 google_apis（非 ps16k）镜像最稳。
-          "$SDKMANAGER" "emulator" "platform-tools" "system-images;android-37.0;google_apis;x86_64"
-          ls "$ANDROID_HOME/system-images/android-37.0/google_apis"
+          # 正好验证真实 ABI 的原生库加载。
+          # 第 12 次跑（run 46148545991）实测：android-37.0 google_apis x86_64 在无 GPU 的
+          # KVM runner 上，surfaceflinger 的 RegionSamplingThread 走
+          # /vendor/lib64/hw/mapper.ranchu.so 的 GoldfishMapper::readFromHost，断言
+          # "Assertion failed: !rcEnc->featureInfo()->hasReadColorBufferDma" 后 SIGABRT；
+          # system_server 随后重启，package 服务消失，安装 APK 必失败。
+          # 关掉 GLDMA/GLDMA2 也没绕开这条路径，故按 ADR-005 已写的回退方案退到 API 36。
+          # minSdk 31 / targetSdk 37 的 APK 在 API 36 上可安装运行，只是不覆盖 API 37 特有行为。
+          SYSTEM_IMAGE="system-images;android-36;google_apis;x86_64"
+          echo "system image = $SYSTEM_IMAGE"
+          "$SDKMANAGER" "emulator" "platform-tools" "$SYSTEM_IMAGE"
+          ls "$ANDROID_HOME/system-images/android-36/google_apis"
+          echo "T003_SYSTEM_IMAGE=$SYSTEM_IMAGE" >> "$GITHUB_ENV"
           QEMU="$ANDROID_HOME/emulator/qemu/linux-x86_64/qemu-system-x86_64"
           echo "qemu = $QEMU"
           # 判据说明（两次踩坑后的结论）：
@@ -300,7 +310,7 @@ jobs:
           fi
           echo "avdmanager = $AVDMANAGER"
           if ! printf 'no\n' | "$AVDMANAGER" create avd -n netdiskhub-t003 \
-              -k "system-images;android-37.0;google_apis;x86_64" --force > /tmp/avd-create.log 2>&1; then
+              -k "$T003_SYSTEM_IMAGE" --force > /tmp/avd-create.log 2>&1; then
             echo "::error::avdmanager create avd 失败"
             cat /tmp/avd-create.log
             exit 1
