@@ -36,8 +36,8 @@ internal object ProviderProbe {
             NetdiskClient(providerId)
         } catch (error: NetdiskException) {
             // 未知 Provider 走统一错误类型，Kotlin 侧不需要知道任何协议细节。
-            // 这里只证明「错误类型能被 Kotlin 捕获」；具体分类由上层决定。
-            requireNotNull(error.message ?: "unknown") { "统一错误类型必须可读" }
+            // describe() 里对变体做穷尽 when，任何一处变体或字段漂移都会编译失败。
+            check(describe(error).isNotEmpty())
             return
         }
         client.use { netdisk ->
@@ -75,5 +75,36 @@ internal object ProviderProbe {
             )
             check(report.isNotEmpty())
         }
+    }
+
+    /**
+     * 穷尽匹配全部十类统一错误。
+     *
+     * 这里**故意不写 else 分支**：UniFFI 生成的是 `sealed class`，一旦 Rust 侧
+     * 增加 / 删除 / 重命名字段，这里就会编译失败，而不是悄悄漏掉一类。
+     * 文本字段统一叫 `detail`（不叫 `message`，避免与 Throwable.message 冲突）。
+     */
+    fun describe(error: NetdiskException): String = when (error) {
+        is NetdiskException.AuthFailed -> "auth:" + error.detail
+        is NetdiskException.HumanVerificationRequired -> "challenge:" + error.detail
+        is NetdiskException.RateLimited -> "rate:" + error.retryAfterMs
+        is NetdiskException.Network -> "network:" + error.detail
+        is NetdiskException.InvalidArgument -> "arg:" + error.detail
+        is NetdiskException.Unsupported -> "unsupported:" + error.detail
+        is NetdiskException.NotFound -> "missing:" + error.path
+        is NetdiskException.AlreadyExists -> "exists:" + error.path
+        is NetdiskException.InvalidSession -> "session:" + error.detail
+        is NetdiskException.Internal -> "internal:" + error.detail
+    }
+
+    /**
+     * 穷尽匹配三种认证输入。
+     *
+     * 同样故意不写 else：Rust 侧一旦新增认证形态，这里立即编译失败。
+     */
+    fun describeAuth(input: AuthInput): String = when (input) {
+        is AuthInput.Password -> "password:" + input.account
+        is AuthInput.SmsCode -> "sms:" + input.phone
+        is AuthInput.ScanCode -> "scan:" + input.ticket
     }
 }

@@ -6,7 +6,7 @@
 
 ### T-101 / T-102 统一 Provider 接口与两个 MockProvider（2026-11-28）
 
-**结论：Rust 核心从「只有 UniFFI 探针」推进到可运行的统一 Provider 抽象，并有 MockAlpha / MockBeta 两个行为不同的实现跑通同一套契约测试。Kotlin 侧只接触通用类型（路径、条目、分页、配额、传输结果、统一错误），会话是不透明对象、不暴露任何 token。`cargo test --workspace --locked` 11 个测试全绿，CI 新增 Rust 测试步骤，Android 构建与双 ABI 检查未受影响。**
+**结论：Rust 核心从「只有 UniFFI 探针」推进到可运行的统一 Provider 抽象，并有 MockAlpha / MockBeta 两个行为不同的实现跑通同一套契约测试。Kotlin 侧只接触通用类型（路径、条目、分页、配额、传输结果、统一错误），会话是不透明对象、不暴露任何 token。`cargo test --workspace --locked` 12 个测试全绿，CI 新增 Rust 测试步骤，Android 构建与双 ABI 检查未受影响。**
 
 #### 新增
 

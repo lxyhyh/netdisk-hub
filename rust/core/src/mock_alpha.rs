@@ -45,7 +45,7 @@ impl MockAlpha {
             Ok(())
         } else {
             Err(NetdiskError::InvalidSession {
-                message: format!("会话句柄未被本 Provider 签发：{}", session.id),
+                detail: format!("会话句柄未被本 Provider 签发：{}", session.id),
             })
         }
     }

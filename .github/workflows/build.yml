@@ -141,6 +141,12 @@ jobs:
             echo "::error::绑定里出现了凭据字段，违反「不向 Kotlin 暴露明文 token」"
             exit 1
           fi
+          # 变体文本字段不得叫 message：kotlin.Throwable 已有 val message，
+          # 同名会让生成的 sealed class 报 Conflicting declarations 而编译失败（实测过）
+          if grep -nE 'val `message`' "$BINDINGS"; then
+            echo "::error::绑定里出现 val message，会与 Throwable.message 冲突；Rust 侧文本字段应改名为 detail"
+            exit 1
+          fi
           echo "OK: 绑定含全部通用接口符号，且无凭据字段"
           echo "--- 前 8 行 ---"
           head -n 8 "$BINDINGS"
