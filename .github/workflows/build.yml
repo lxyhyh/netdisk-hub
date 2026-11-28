@@ -346,8 +346,15 @@ jobs:
           echo "---- AVD config.ini ----"
           sed -n "1,80p" "$ANDROID_AVD_HOME/netdiskhub-t003.avd/config.ini" || true
           echo "---- 启动模拟器：verbose + 固定端口 5555 ----"
+          # 第 9 次跑（run 46145446338）的真实故障：模拟器起来了、adb 也认到了设备、
+          # boot_completed 也拿到了，但 guest 里的 surfaceflinger 每隔 10 秒 SIGABRT
+          # （Fatal signal 6 ... tid RegionSampling），system_server 跟着反复重启，
+          # 于是安装 APK 时报 "Can't find service: package"。
+          # 这是默认 GPU 后端（host/auto）在无 GPU runner 上的软件渲染崩溃，
+          # 固定用 swiftshader_indirect 软件渲染，并关掉 Vulkan 走 GLES2 路径。
           "$EMULATOR" -avd netdiskhub-t003 \
             -no-window -no-audio -no-boot-anim -no-snapshot \
+            -gpu swiftshader_indirect -feature -Vulkan \
             -ports 5554,5555 -memory 4096 -cores 4 \
             -accel on -camera-back none -camera-front none \
             -no-metrics -netdelay none -netspeed full -verbose \
@@ -384,6 +391,25 @@ jobs:
             kill "$EMU_PID" 2>/dev/null || true
             exit 1
           fi
+          # boot_completed 只说明启动脚本跑完，不保证 system_server 稳定。
+          # 第 9 次跑就是 boot_completed 之后 system_server 又崩了。这里再确认
+          # package 服务真的可用，并给系统 30 秒稳定时间。
+          PKG_OK=0
+          for i in $(seq 1 40); do
+            if "$ADB" shell cmd package list packages > /dev/null 2>&1; then
+              PKG_OK=1
+              echo "package 服务可用，第 $i 次检查"
+              break
+            fi
+            sleep 3
+          done
+          if [ "$PKG_OK" -ne 1 ]; then
+            echo "::error::package 服务始终不可用（system_server 可能反复重启）"
+            "$ADB" shell ps -A 2>/dev/null | grep -E "system_server|surfaceflinger" || true
+            exit 1
+          fi
+          sleep 30
+          echo "system_server pid = $("$ADB" shell pidof system_server | tr -d "\r")"
           echo "sdk = $("$ADB" shell getprop ro.build.version.sdk | tr -d "\r")"
           echo "abi = $("$ADB" shell getprop ro.product.cpu.abi | tr -d "\r")"
           "$ADB" shell input keyevent 82 || true
