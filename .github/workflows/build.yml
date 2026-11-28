@@ -227,6 +227,19 @@ jobs:
           ls -l /dev/kvm
           grep -cE 'vmx|svm' /proc/cpuinfo || true
 
+      # 首跑踩到的真实故障：ubuntu-24.04 runner 缺 libpulse.so.0，
+      # qemu-system-x86_64 加载失败 -> emulator 进程立即退出 ->
+      # adb wait-for-device 永远等不到设备 -> 整步 45 分钟超时。
+      # 所以运行库必须显式装好，并且用 ldd 硬断言，不允许再静默退化。
+      - name: Install emulator runtime dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpulse0 libnss3 libx11-6 libxcomposite1 libxcursor1 libxi6 libxtst6 libxdamage1 libxrandr2 libglu1-mesa libasound2t64 \
+            || sudo apt-get install -y --no-install-recommends \
+              libpulse0 libnss3 libx11-6 libxcomposite1 libxcursor1 libxi6 libxtst6 libxdamage1 libxrandr2 libglu1-mesa libasound2
+
       - name: Install emulator and x86_64 system image
         run: |
           set -euo pipefail
@@ -240,8 +253,22 @@ jobs:
           # 正好验证真实 ABI 的原生库加载；android-37.0 的 google_apis（非 ps16k）镜像最稳。
           "$SDKMANAGER" "emulator" "platform-tools" "system-images;android-37.0;google_apis;x86_64"
           ls "$ANDROID_HOME/system-images/android-37.0/google_apis"
-          # 直接管道到 head 会让 emulator 收到 SIGPIPE，配合 pipefail 会误判失败
-          "$ANDROID_HOME/emulator/emulator" -version > /tmp/emu-version.txt 2>&1 || true
+          QEMU="$ANDROID_HOME/emulator/qemu/linux-x86_64/qemu-system-x86_64"
+          echo "qemu = $QEMU"
+          # 硬断言：动态库缺一个都不许往下走，否则会在启动阶段静默卡死
+          MISSING="$(ldd "$QEMU" | grep 'not found' || true)"
+          if [ -n "$MISSING" ]; then
+            echo "::error::qemu-system-x86_64 仍缺共享库："
+            printf '%s\n' "$MISSING"
+            exit 1
+          fi
+          # 直接管道到 head 会让 emulator 收到 SIGPIPE，配合 pipefail 会误判失败，
+          # 但也不能用 || true 掩盖真正的加载失败。
+          if ! "$ANDROID_HOME/emulator/emulator" -version > /tmp/emu-version.txt 2>&1; then
+            echo "::error::emulator -version 执行失败"
+            cat /tmp/emu-version.txt
+            exit 1
+          fi
           head -n 3 /tmp/emu-version.txt
 
       - name: Create AVD
@@ -257,7 +284,7 @@ jobs:
           "$AVDMANAGER" list avd
 
       - name: Run Android instrumented tests on emulator
-        timeout-minutes: 45
+        timeout-minutes: 30
         run: |
           set -euo pipefail
           EMULATOR="$ANDROID_HOME/emulator/emulator"
@@ -271,10 +298,16 @@ jobs:
           EMU_PID=$!
           echo "emulator pid = $EMU_PID"
           "$ADB" start-server
-          "$ADB" wait-for-device
+          # wait-for-device 没有超时，模拟器一崩就会一直等到 job 超时（首跑就是这么挂的），
+          # 必须自己加超时并立刻把模拟器日志打出来。
+          if ! timeout 600 "$ADB" wait-for-device; then
+            echo "::error::600 秒内没有等到任何设备，模拟器可能没起来"
+            tail -n 200 /tmp/emu/emulator.log || true
+            exit 1
+          fi
           # 只看 wait-for-device 会在 init 阶段就通过，必须再等 sys.boot_completed
           BOOTED=0
-          for i in $(seq 1 240); do
+          for i in $(seq 1 180); do
             if ! kill -0 "$EMU_PID" 2>/dev/null; then
               echo "::error::模拟器进程提前退出"
               tail -n 200 /tmp/emu/emulator.log
