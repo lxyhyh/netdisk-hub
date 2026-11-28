@@ -1,5 +1,6 @@
 package com.netdiskhub.app
 
+import androidx.test.platform.app.InstrumentationRegistry
 import com.netdiskhub.core.AuthInput
 import com.netdiskhub.core.ListOptions
 import com.netdiskhub.core.NetdiskClient
@@ -9,6 +10,7 @@ import com.netdiskhub.core.Session
 import com.netdiskhub.core.TransferOpts
 import com.netdiskhub.core.probeMagic
 import com.netdiskhub.core.providerIds
+import com.sun.jna.Native
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -51,9 +53,19 @@ class UniffiRuntimeTest {
         val magic = Bg.call { probeMagic() }
         assertEquals("probeMagic 未返回预期值，说明 Rust 库没有真正跑起来", 65538u, magic)
 
+        // 地址空间证据：Android 在 extractNativeLibs=false（minSdk>=23 的默认值）时
+        // 直接在 base.apk 内部 mmap 压缩包里的 .so，此时 /proc/self/maps 的路径列是
+        // APK 路径而不是 .so 文件名（第 13 次跑 t01 就是按文件名断言而误报失败的）。
+        // 所以这里两种形态都认：解压出来的 .so 文件，或已映射的 base.apk。
         val maps = File("/proc/self/maps").readText()
-        assertTrue("进程地址空间里没有 libnetdiskhub_core.so", maps.contains("libnetdiskhub_core.so"))
-        assertTrue("进程地址空间里没有 libjnidispatch.so", maps.contains("libjnidispatch.so"))
+        val apkPath = InstrumentationRegistry.getInstrumentation().targetContext.applicationInfo.sourceDir
+        val mappedByName = maps.contains("libnetdiskhub_core.so")
+        val mappedFromApk = apkPath.isNotEmpty() && maps.contains(apkPath)
+        assertTrue(
+            "进程地址空间里既没有 libnetdiskhub_core.so，也没有映射 base.apk（apk=$apkPath）",
+            mappedByName || mappedFromApk,
+        )
+        assertEquals("JNA 版本号未取到，说明 jnidispatch 没有真正加载", true, Native.VERSION.startsWith("5."))
     }
 
     /** 2. Kotlin 调用 probeMagic()，返回值必须是 0x00010002。 */

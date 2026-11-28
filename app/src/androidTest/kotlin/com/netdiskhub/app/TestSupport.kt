@@ -3,6 +3,7 @@ package com.netdiskhub.app
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import java.util.concurrent.Callable
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -19,7 +20,17 @@ internal object Bg {
         Thread(runnable, "netdiskhub-test-worker")
     }
 
-    fun <T> call(block: () -> T): T = pool.submit(Callable { block() }).get(120, TimeUnit.SECONDS)
+    fun <T> call(block: () -> T): T =
+        try {
+            pool.submit(Callable { block() }).get(120, TimeUnit.SECONDS)
+        } catch (failure: ExecutionException) {
+            // Future.get 会把异步体内的异常包成 ExecutionException；
+            // 测试要按原始类型（NetdiskException.NotFound 等）断言，必须解开这一层。
+            throw failure.cause ?: failure
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw interrupted
+        }
 }
 
 /** 测试用的本地临时目录：应用自己的 cache 目录，不依赖 runner 上的固定路径。 */
