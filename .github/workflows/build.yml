@@ -318,11 +318,16 @@ jobs:
           echo "ANDROID_AVD_HOME = $AVD_HOME_DIR"
           "$AVDMANAGER" list avd
 
-      # 第 6 次跑（run 46141556294）卡住的地方：模拟器进程起来了，
-      # 但 600 秒内 adb 一直没看到设备。emulator 37.x 起 -gpu swiftshader_indirect
-      # 已不是受支持的写法，先按默认渲染启动，失败再退到 -gpu guest 重试一次。
+      # 前 6 次跑的真实结论：依赖、AVD 路径、KVM 都已就绪，emulator 进程能起来并打印
+      # "Emulator is performing a full startup"，但宿主侧 adb devices 始终为空列表。
+      # 第 7 次跑（run 46142913865）又试了 auto 与 guest 两种 GPU 模式，各等 5 分钟，
+      # 两次都拿不到设备；而失败时的 emulator 日志没有被上传（cp 只在启动成功后执行），
+      # 所以无法定论到底是 boot 卡住、adb 端口没起、还是端口被别的进程占用。
+      # 本次改为：单次启动 + 更高的内核/内存配额 + 固定 adb 端口 5555 + verbose 全量日志，
+      # 轮询期间每 60 秒打印 adb devices 与 555x 端口监听状态；失败时打印日志关键词，
+      # 并由后面的 always 步骤把日志上传成 artifact，避免再盲试。
       - name: Run Android instrumented tests on emulator
-        timeout-minutes: 30
+        timeout-minutes: 40
         run: |
           set -euo pipefail
           EMULATOR="$ANDROID_HOME/emulator/emulator"
@@ -337,53 +342,50 @@ jobs:
           fi
           "$ADB" kill-server || true
           "$ADB" start-server
+          "$ADB" devices -l || true
+          echo "---- AVD config.ini ----"
+          sed -n "1,80p" "$ANDROID_AVD_HOME/netdiskhub-t003.avd/config.ini" || true
+          echo "---- 启动模拟器：verbose + 固定端口 5555 ----"
+          "$EMULATOR" -avd netdiskhub-t003 \
+            -no-window -no-audio -no-boot-anim -no-snapshot \
+            -ports 5554,5555 -memory 4096 -cores 4 \
+            -accel on -camera-back none -camera-front none \
+            -no-metrics -netdelay none -netspeed full -verbose \
+            > /tmp/emu/emulator.log 2>&1 &
+          EMU_PID=$!
+          echo "emulator pid = $EMU_PID"
           BOOTED=0
-          ATTEMPT=0
-          for GPU_MODE in auto guest; do
-            ATTEMPT=$((ATTEMPT + 1))
-            echo "==== 启动尝试 $ATTEMPT，gpu 模式 $GPU_MODE ===="
-            EXTRA_GPU=()
-            if [ "$GPU_MODE" != "auto" ]; then
-              EXTRA_GPU=(-gpu "$GPU_MODE")
-            fi
-            "$EMULATOR" -avd netdiskhub-t003 \
-              -no-window -no-audio -no-boot-anim -no-snapshot \
-              "${EXTRA_GPU[@]}" -accel on -camera-back none -camera-front none \
-              -no-metrics -netdelay none -netspeed full \
-              > "/tmp/emu/emulator-$ATTEMPT.log" 2>&1 &
-            EMU_PID=$!
-            echo "emulator pid = $EMU_PID"
-            for i in $(seq 1 60); do
-              if [ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
-                BOOTED=1
-                echo "boot completed，第 $i 次轮询（约 $((i * 5)) 秒）"
-                break
-              fi
-              if ! kill -0 "$EMU_PID" 2>/dev/null; then
-                echo "模拟器进程提前退出（尝试 $ATTEMPT）"
-                break
-              fi
-              sleep 5
-            done
-            if [ "$BOOTED" -eq 1 ]; then
+          for i in $(seq 1 140); do
+            if [ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = "1" ]; then
+              BOOTED=1
+              echo "boot completed，第 $i 次轮询（约 $((i * 5)) 秒）"
               break
             fi
-            echo "---- 尝试 $ATTEMPT 未完成启动，输出诊断 ----"
-            "$ADB" devices || true
-            tail -n 80 "/tmp/emu/emulator-$ATTEMPT.log" || true
-            kill "$EMU_PID" 2>/dev/null || true
-            wait "$EMU_PID" 2>/dev/null || true
-            "$ADB" kill-server || true
+            if ! kill -0 "$EMU_PID" 2>/dev/null; then
+              echo "模拟器进程提前退出（第 $i 次轮询）"
+              break
+            fi
+            if [ $((i % 12)) -eq 0 ]; then
+              echo "---- 第 $i 次轮询（约 $((i * 5)) 秒）----"
+              "$ADB" devices -l || true
+              ss -lntp 2>/dev/null | grep -E ":555[0-9]" || echo "（宿主机未监听 555x 端口）"
+              tail -n 5 /tmp/emu/emulator.log || true
+            fi
             sleep 5
-            "$ADB" start-server
           done
           if [ "$BOOTED" -ne 1 ]; then
-            echo "::error::两次尝试都没有等到 sys.boot_completed"
-            "$ADB" devices || true
+            echo "::error::等待 sys.boot_completed 超时"
+            "$ADB" devices -l || true
+            ss -lntp 2>/dev/null | grep -E ":555[0-9]" || true
+            echo "---- emulator.log 末尾 200 行 ----"
+            tail -n 200 /tmp/emu/emulator.log || true
+            echo "---- emulator.log 关键词 ----"
+            grep -nEi "error|panic|cannot|hang|timeout|failed" /tmp/emu/emulator.log | tail -n 60 || true
+            kill "$EMU_PID" 2>/dev/null || true
             exit 1
           fi
-          echo "sdk = $("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
-          echo "abi = $("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
+          echo "sdk = $("$ADB" shell getprop ro.build.version.sdk | tr -d "\r")"
+          echo "abi = $("$ADB" shell getprop ro.product.cpu.abi | tr -d "\r")"
           "$ADB" shell input keyevent 82 || true
           "$ADB" shell settings put global window_animation_scale 0 || true
           "$ADB" shell settings put global transition_animation_scale 0 || true
@@ -396,10 +398,18 @@ jobs:
           set -e
           "$ADB" logcat -d -v threadtime > /tmp/emu/logcat.txt || true
           "$ADB" shell pm list packages | grep netdiskhub || true
-          mkdir -p app/build/emulator-artifacts
-          cp -f /tmp/emu/emulator-*.log /tmp/emu/gradle-test.log /tmp/emu/logcat.txt app/build/emulator-artifacts/ || true
           echo "connectedDebugAndroidTest exit code = $TEST_RC"
           exit "$TEST_RC"
+
+      # 无论模拟器那一步成功还是失败，都把 /tmp/emu 下的日志收集起来上传，
+      # 否则失败时又只能靠猜（第 1–7 次跑的共同教训）。
+      - name: Collect emulator diagnostics
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p app/build/emulator-artifacts
+          cp -f /tmp/emu/*.log /tmp/emu/*.txt app/build/emulator-artifacts/ 2>/dev/null || true
+          ls -l app/build/emulator-artifacts || true
       # 只「跑完不报错」不够：必须证明用例数、零失败、零跳过，
       # 且 T-003 十项与 T-103 十二项的用例名都出现在结果里。
       - name: Verify instrumented test results
