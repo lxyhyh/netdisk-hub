@@ -102,6 +102,13 @@ jobs:
             exit 1
           fi
 
+      # T-101 / T-102：统一 Provider 核心与两个 MockProvider 的单元测试。
+      # 宿主目标测试，不需要 NDK / Android 工具链；--locked 锁 rust/Cargo.lock。
+      # 契约测试（两个 Mock 跑同一套断言）就在这一步里，失败即令 workflow 失败。
+      - name: Run Rust unit tests
+        working-directory: rust
+        run: cargo test --workspace --locked -- --nocapture
+
       # 这一步同时触发 cargoNdkBuild（cargo ndk 交叉编译）与
       # generateUniffiBindings（cargo build uniffi-bindgen + 抽元数据生成绑定）
       - name: Build debug APK
@@ -124,6 +131,17 @@ jobs:
             || { echo "::error::绑定里没有 probeMagic"; exit 1; }
           grep -q 'com.sun.jna' "$BINDINGS" \
             || { echo "::error::绑定里没有 JNA 依赖"; exit 1; }
+          # T-101：统一 Provider 接口必须真的出现在绑定里，而不只是 Rust 侧有代码
+          for NEEDLE in 'fun `providerIds`' 'open class NetdiskClient' 'class Session' 'sealed class NetdiskException' 'data class RemotePath' 'fun `quota`' 'fun `mkdir`'; do
+            grep -qF "$NEEDLE" "$BINDINGS" \
+              || { echo "::error::绑定里缺少 $NEEDLE"; exit 1; }
+          done
+          # 会话不透明性：绑定里不能出现任何 token / cookie 字段名
+          if grep -nEi 'val `?(token|cookie|accessToken|refreshToken|bduss|stoken)`?' "$BINDINGS"; then
+            echo "::error::绑定里出现了凭据字段，违反「不向 Kotlin 暴露明文 token」"
+            exit 1
+          fi
+          echo "OK: 绑定含全部通用接口符号，且无凭据字段"
           echo "--- 前 8 行 ---"
           head -n 8 "$BINDINGS"
 

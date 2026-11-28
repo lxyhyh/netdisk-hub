@@ -4,6 +4,34 @@
 
 ## [未发布]
 
+### T-101 / T-102 统一 Provider 接口与两个 MockProvider（2026-11-28）
+
+**结论：Rust 核心从「只有 UniFFI 探针」推进到可运行的统一 Provider 抽象，并有 MockAlpha / MockBeta 两个行为不同的实现跑通同一套契约测试。Kotlin 侧只接触通用类型（路径、条目、分页、配额、传输结果、统一错误），会话是不透明对象、不暴露任何 token。`cargo test --workspace --locked` 11 个测试全绿，CI 新增 Rust 测试步骤，Android 构建与双 ABI 检查未受影响。**
+
+#### 新增
+
+- `rust/core/src/model.rs`：`RemotePath`（规范化：折叠 `/`、拒绝 `.`/`..`/控制字符）、`RemoteFile`、`ListOptions`、`Page`、`Quota`、`TransferOpts`、`TransferReport`、`AuthInput`（Password / SmsCode / ScanCode 三态）、`ProviderInfo`
+- `rust/core/src/error.rs`：`NetdiskError` 十类（AuthFailed / HumanVerificationRequired / RateLimited / Network / InvalidArgument / Unsupported / NotFound / AlreadyExists / InvalidSession / Internal），`Display` 为中文文案，不含任何网盘专有名
+- `rust/core/src/provider.rs`：`ProviderBackend` trait（`info`/`connect`/`list`/`download`/`upload`/`remove`/`rename`/`mkdir`/`quota`）+ `SessionContext` + `ConformanceFixture` + `run_conformance()` 契约测试
+- `rust/core/src/mock_common.rs`：两个 Mock 共用的内存虚拟文件系统（目录树、上传/下载/续传/重命名/删除/配额）
+- `rust/core/src/mock_alpha.rs`：`MockAlpha`，三种认证全支持，默认页长 2，根目录 `documents/` `notes.txt` `photo.png` `readme.md`
+- `rust/core/src/mock_beta.rs`：`MockBeta`，不支持扫码（返回 `Unsupported`），默认页长 3、`page_size > 100` 返回 `InvalidArgument`，根目录 `a.txt` `b.txt` `shared/`
+- `rust/core/src/ffi.rs`：`NetdiskClient`（`#[derive(uniffi::Object)]`）+ `Session`（不透明）+ `providerIds()`；**不导出 trait**
+- `app/src/main/kotlin/com/netdiskhub/app/ProviderProbe.kt`：Kotlin 侧对全部通用类型与方法的编译期引用
+
+#### 修改
+
+- `rust/core/src/lib.rs`：新增六个 `pub mod` 声明；**`netdiskhub_probe` 与 `probe_magic` 原样保留**
+- `.github/workflows/build.yml`：新增 `Run Rust unit tests`（`cargo test --workspace --locked`）；`Verify UniFFI Kotlin bindings` 增加 7 个通用接口符号断言与「绑定内不得出现 token / cookie / bduss / stoken 字段」断言
+- `.github/workflows/rust.yml`：新增 `Run Rust unit tests (host target)`
+- `docs/TASKS.md`：索引表新增 T-101 / T-102 两行并标已完成；阶段 1 清单同步；新增两张任务卡（目标 / 交付内容 / 关键设计决定 / 验收 / 完成情况）
+
+#### 说明
+
+- 本轮**不涉及**任何真实网盘请求、登录、签名、设备指纹；全部数据虚构（`example.test` 域名、`1300000000x` 手机号）
+- 未新增任何依赖：只用到已有的 `uniffi = "=0.32.2"`
+- 契约测试并行执行时曾争用同名临时文件（`Os { code: 2, kind: NotFound }`），已改为按 Provider id 分文件
+- `docs/API_FACTS.md`、`docs/PROVIDERS.md`、百度深度分析、`docs/RISKS.md` **按本轮约束未改动**
 ### T-006 zid 的 native 依赖与二次查询收口（2026-11-28）
 
 **结论：百度「三条登录路径均不依赖闭源 native」的表述不准确，已全部改写。核心认证算法（RSA 密码加密、`sig` 签名、`di` 的 AES 加密）确实不依赖闭源 native、可静态复刻；但公共参数 `zid` 的真实值依赖 `libfire`（`sofire/jni/Asc.java:5-8` `System.loadLibrary("fire")` → `sofire/ac/F.java:248-284` 的 `re()` 直接转调 `Asc.ar`）与服务端下发数据。七条来源穷举后，纯 Java 可独立产出的只有 **62 位硬编码常量** 与 **空串**，没有第三种。`SapiDeviceInfo.java:242-249` 的二次查询（事件 id 120）只覆盖 `di` 的 `sf_zid`、不回写公共参数 map，且发生在 AES 加密之前；C 扫码 `cookie = null` 完全不触发 `DVIF`。A/B/C 档位未改动，T-005 未重跑，MVP 未锁定。**

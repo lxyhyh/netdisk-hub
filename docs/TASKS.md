@@ -1,6 +1,6 @@
 # 任务卡（TASKS）
 
-- 最后更新：2026-11-28（**T-006 最终一致性校正完成**：`t_cuid`/`t_appname` 字段来源更正（索引 38/39 曾写反）、`i()` 已确认进入最终请求、`sf_zid` 七分支与 62 位常量已闭环、验证码 WebView 与坚果云 R27 统一口径并新增「A 密码路径同样存在 50052 挑战分支」；三路径档位不变（A 可行 / B 需攻关 / C 可行）；T-005 历史 No-Go 未改写、MVP 未锁定、未启动阶段 2。<br>此前：2026-11-28（**T-006 补充收口完成**：`libbaiduprotect_sec.so` 已闭环、短信发码已取证但 **B 路径降级为「需攻关」**、扫码 `hostDeviceId` 已闭环为「官方不生成」、`cuid` 官方算法已定位；百度整体仍判「原生登录可行」但成立路径收窄为 A/C；T-005 历史 No-Go 未改写、MVP 未锁定。<br>此前：2026-11-28（T-006 完成：百度改判「原生登录可行（静态可行，动态未验证）」，硬准入数量 1 → 2；T-005 的历史 No-Go 结论未改写、MVP 未锁定；此前 T-002c / T-002d / T-005 完成、T-002e 第 3 轮已归档）
+- 最后更新：2026-11-28（**T-101 / T-102 完成**：统一 Provider 接口（模型 / 认证输入 / 不透明会话 / 十类统一错误 / 九项操作 / UniFFI 句柄导出）与两个行为不同的 MockProvider 已落地，Rust 单元测试 11 个全绿（含同一套契约测试对两个实现各跑一遍），CI 新增 Rust 测试步骤且 Android 构建与双 ABI 检查未受影响。<br>此前：2026-11-28（**T-006 最终一致性校正完成**：`t_cuid`/`t_appname` 字段来源更正（索引 38/39 曾写反）、`i()` 已确认进入最终请求、`sf_zid` 七分支与 62 位常量已闭环、验证码 WebView 与坚果云 R27 统一口径并新增「A 密码路径同样存在 50052 挑战分支」；三路径档位不变（A 可行 / B 需攻关 / C 可行）；T-005 历史 No-Go 未改写、MVP 未锁定、未启动阶段 2。<br>此前：2026-11-28（**T-006 补充收口完成**：`libbaiduprotect_sec.so` 已闭环、短信发码已取证但 **B 路径降级为「需攻关」**、扫码 `hostDeviceId` 已闭环为「官方不生成」、`cuid` 官方算法已定位；百度整体仍判「原生登录可行」但成立路径收窄为 A/C；T-005 历史 No-Go 未改写、MVP 未锁定。<br>此前：2026-11-28（T-006 完成：百度改判「原生登录可行（静态可行，动态未验证）」，硬准入数量 1 → 2；T-005 的历史 No-Go 结论未改写、MVP 未锁定；此前 T-002c / T-002d / T-005 完成、T-002e 第 3 轮已归档）
 - 一个任务一节
 
 ## 编号索引
@@ -17,6 +17,8 @@
 | T-004 | CRAP / 变异测试工具兼容性复核 | 1 前置 | 待启动（依赖 T-002e） |
 | T-005 | Go/No-Go 决策与 MVP 网盘锁定 | 0 | **已完成（No-Go）** |
 | T-006 | 百度网盘原生登录攻关与第二家准入验证 | 0 | **已完成** |
+| T-101 | 定义 UniFFI 深接口（统一 Provider 接口） | 1 | **已完成** |
+| T-102 | 实现 MockProvider（两个假 Adapter 验证 seam） | 1 | **已完成** |
 
 **编号规则**
 
@@ -1371,6 +1373,104 @@ A 可独立实现（带条件性人机验证依赖）/ B 需攻关（等用户�
 
 未解决：①服务端是否接受 62 位常量 / 空串 / `"NoZidYet"` 作为 `zid`（R33）②两次 zid 查询在真实环境是否确实返回不同值（需抓包，本轮不做）③`xytk` 的实际来源与刷新频率（服务端行为）④`libfire.so` 的 10 个 native 算法是否可等价重写（本轮不做，需 ADR）。
 ---
+## T-101（阶段1）：定义 UniFFI 深接口
+
+- 阶段：1
+- 状态：**已完成**
+- 依赖：T-002e（CI 构建链已具备）
+- 产出：`rust/core/src/{model,error,provider,ffi}.rs` + `app/src/main/kotlin/com/netdiskhub/app/ProviderProbe.kt`
+
+### 目标
+
+把「一个 Android 客户端管理多家网盘」的**通用**能力固化成 Rust 侧统一接口，
+并通过 UniFFI 暴露给 Kotlin。Kotlin 只能看到通用概念，不得接触任何网盘专有字段。
+
+### 交付内容
+
+| 项 | 落地位置 | 说明 |
+|---|---|---|
+| 统一基础模型 | `rust/core/src/model.rs` | `RemotePath`（自带规范化，拒绝 `.`/`..`/控制字符）、`RemoteFile`、`ListOptions`、`Page`、`Quota`、`TransferOpts`、`TransferReport`、`ProviderInfo` |
+| 统一认证输入 | `rust/core/src/model.rs` | `AuthInput` 三态：`Password` / `SmsCode` / `ScanCode`，与 AGENTS.md 第 9 条一致（无 OAuth / WebView / cookie） |
+| 会话抽象 | `rust/core/src/provider.rs` + `ffi.rs` | `SessionContext` 内部持有不透明 id；导出层 `Session` 是 `uniffi::Object`，**Kotlin 拿不到任何字符串** |
+| 统一错误 | `rust/core/src/error.rs` | `NetdiskError` 十类：AuthFailed / HumanVerificationRequired / RateLimited / Network / InvalidArgument / Unsupported / NotFound / AlreadyExists / InvalidSession / Internal |
+| Provider 操作 | `rust/core/src/provider.rs` | `ProviderBackend` 九方法：`info`/`connect`/`list`/`download`/`upload`/`remove`/`rename`/`mkdir`/`quota` |
+| UniFFI 导出 | `rust/core/src/ffi.rs` | `NetdiskClient`（句柄对象）+ `providerIds()`；**不导出 trait**，方法逐个转发 |
+| Kotlin 编译期验证 | `app/src/main/kotlin/com/netdiskhub/app/ProviderProbe.kt` | 引用全部通用类型与方法，类型不符即编译失败 |
+
+### 关键设计决定
+
+1. **不导出 Rust trait**：UniFFI 0.32.2 支持 `#[uniffi::export] trait`，但导出 trait 会把实现自由度写进对外契约。这里只用 `#[derive(uniffi::Object)]` 句柄 + 普通方法，内部 `Arc<dyn ProviderBackend>` 保持不变。
+2. **会话不透明**：`Session` 不暴露 `id`、不暴露 token。Kotlin 只能把 `Session` 原样传回，明文凭据永远不跨边界。
+3. **路径在 Rust 侧收口**：`RemotePath::parse` 是唯一入口，拒绝 `..` 与 `..` 段、折叠 `/`，避免每个 Adapter 各写一套拼接导致行为分叉。
+4. **探针保留**：`netdiskhub_probe` 与 `probe_magic` 原样保留（CI 的 ELF 符号检查与绑定检查都用它们）。
+
+### 验收
+
+- [x] 统一模型、认证输入、会话、错误、九项操作全部落地，无网盘专有字段
+- [x] UniFFI 绑定生成成功，Kotlin 侧引用全部通用类型并通过编译（CI 证明）
+- [x] 绑定内无 `token` / `cookie` / `bduss` / `stoken` 等凭据字段（CI 断言）
+- [x] 未新增未经批准的依赖；未实现真实网盘请求
+
+### 完成情况（2026-11-28）
+
+- 静态自检：`cargo test --workspace --locked` 在宿主目标通过，11 个测试全绿
+- 绑定自检：本地生成 `netdiskhub_core.kt` 2985 行，`providerIds` / `NetdiskClient` / `Session` / `NetdiskException` / `RemotePath` / `quota` / `mkdir` / `stat` 全部命中；凭据字段 0 命中
+- 运行时（Kotlin 编译 + 打包 + 设备执行）由 GitHub Actions 证明，见 T-102 完成情况
+
+---
+
+## T-102（阶段1）：实现 MockProvider（两个假 Adapter 验证 seam）
+
+- 阶段：1
+- 状态：**已完成**
+- 依赖：T-101
+- 产出：`rust/core/src/{mock_common,mock_alpha,mock_beta}.rs`
+
+### 目标
+
+用两个**行为不同**的假 Adapter 证明统一接口不是为某一家特制的（对应 ARCHITECTURE.md §2 的真 seam 判定：至少两个实现）。
+
+### 两个实现的行为差异
+
+| 维度 | MockAlpha | MockBeta |
+|---|---|---|
+| Provider id | `mock-alpha` | `mock-beta` |
+| 认证方式 | 密码 / 短信 / 扫码 三种全支持 | 只有密码 / 短信，**扫码返回 `Unsupported`** |
+| 默认页长 | 2 | 3 |
+| 单页上限 | 无额外限制 | `page_size > 100` 返回 `InvalidArgument` |
+| 虚拟根目录 | `documents/`、`notes.txt`、`photo.png`、`readme.md` | `a.txt`、`b.txt`、`shared/` |
+| 测试数据 | `documents/archive/`、`documents/report.txt` | `shared/team/`、`shared/memo.txt` |
+| 总容量 | 1 GiB | 1 TiB |
+
+两者共享 `mock_common.rs` 的内存虚拟文件系统（目录树、上传/下载/续传/重命名/删除/配额语义），登录与服务差异留在各自 Provider 里——这样「文件操作语义一致」与「登录能力可不同」两件事互不干扰。
+
+### 契约测试
+
+`provider.rs` 里的 `run_conformance()` 是**唯一**一套断言，两个 Mock 各自跑一遍，覆盖：
+
+- 认证：错误密码 → `AuthFailed`；正确密码 / 短信 → 签发会话；扫码按 Provider 能力分别断言成功或 `Unsupported`
+- 列目录：根目录含各自种子目录；`page_size=2` 逐页取完后条目集合与一次性取完**完全一致**（用 `assert_eq!(seen, expected)` 比对，不只是比数量）
+- 配额：`totals` 非空、`used <= total`
+- 目录：`mkdir` 成功；重复 `mkdir` → `AlreadyExists`
+- 传输：上传字节数等于本地文件长度；同名未覆盖 → `AlreadyExists`；`overwrite=true` 可覆盖；下载内容逐字节相等；`resume_from=6` 时只写剩余字节且结果完整
+- 重命名：改名后在新目录能列出
+- 错误：删除不存在 → `NotFound`；下载不存在 → `NotFound`；`..` 路径 → `InvalidArgument`；父目录不存在上传 → `InvalidArgument`；伪造会话 → `InvalidSession`
+
+### 验收
+
+- [x] 两个 Provider 实现同一 trait，各自独立虚拟目录与数据
+- [x] 登录成功与失败场景均有测试
+- [x] 列目录 / 分页 / 配额 / 上传 / 下载 / 删除 / 重命名 / 新建文件夹全部覆盖
+- [x] 无效路径、无效会话、重复文件名、目标不存在均返回明确错误分类
+- [x] **同一套契约测试**对两个实现都通过
+- [x] 测试数据全部虚构（`example.test` 域名、`1300000000x` 手机号、编造凭证）
+
+### 完成情况（2026-11-28）
+
+- 本地 `cargo test --workspace --locked`：11 个测试全绿，其中 2 个是契约测试（Alpha / Beta 各一）
+- CI：`build.yml` 与 `rust.yml` 均新增 `cargo test --workspace --locked` 步骤；Android 构建、双 ABI 检查、UniFFI 绑定检查、APK 原生库检查全部保留
+- 踩坑记录：两个 Mock 的契约测试并行执行时会争用同名临时文件（`Os { code: 2, kind: NotFound }`），已改为按 Provider id 分文件
+
 ## 阶段 0：控制面与接口侦察
 
 - T-001 建立项目控制面与接口盘点（进行中）
@@ -1389,8 +1489,8 @@ A 可独立实现（带条件性人机验证依赖）/ B 需攻关（等用户�
 
 ## 阶段 1：Provider 抽象 + MockProvider
 
-- T-101 定义 UniFFI 深接口
-- T-102 实现 MockProvider（两个假 Adapter 验证 seam）
+- **T-101 定义 UniFFI 深接口（已完成：通用模型 / 认证输入 / 不透明会话 / 统一错误 / 9 个 Provider 操作 / UniFFI 句柄导出）**
+- **T-102 实现 MockProvider（已完成：MockAlpha + MockBeta 两个实现，同一套契约测试全部通过）**
 - T-103 Kotlin UseCase 层与契约测试
 - T-104 CRAP ≤6 与 lint/typecheck/test 门禁接入
 

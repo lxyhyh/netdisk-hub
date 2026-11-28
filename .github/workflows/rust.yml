@@ -103,6 +103,10 @@ jobs:
           rustc -V | grep -q '^rustc 1.100.0 ' \
             || { echo "::error::rust-toolchain.toml 未生效"; exit 1; }
 
+      - name: Run Rust unit tests (host target)
+        working-directory: rust
+        run: cargo test --workspace --locked -- --nocapture
+
       - name: Cross-compile for arm64-v8a and x86_64
         working-directory: rust
         run: |
