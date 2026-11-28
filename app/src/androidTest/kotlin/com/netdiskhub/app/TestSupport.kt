@@ -1,6 +1,6 @@
 package com.netdiskhub.app
 
-import android.app.InstrumentationRegistry
+import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors

@@ -1,6 +1,6 @@
 package com.netdiskhub.app
 
-import android.app.InstrumentationRegistry
+import androidx.test.platform.app.InstrumentationRegistry
 import com.netdiskhub.app.usecase.ErrorKind
 import com.netdiskhub.app.usecase.FilePage
 import com.netdiskhub.app.usecase.ProviderSummary
