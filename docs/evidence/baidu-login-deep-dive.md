@@ -20,6 +20,8 @@
 
 **百度的账号密码、短信验证码、扫码三条登录路径，在静态证据上都可以由本项目独立实现，均不依赖官方闭源 native 库；唯一未闭环的是服务端风控是否放行，属动态验证范畴。整体四档结论：原生登录可行（静态可行，动态未验证）。**
 
+> **2026-11-29 补充收口后的一处修正**：上述「三条均可独立实现」已被 §15.7 修正为 **A 账号密码可独立实现 / B 短信需攻关（前置人机验证是 WebView + 服务端 JS）/ C 扫码可独立实现（带「服务端接受 `hostDeviceId` 缺席」这一动态前提）**；native 结论不变。**整体四档仍为「原生登录可行」**，因为 A、C 两条路径不含静态不可复刻环节。本节原文保留不改，差异登记见 §15.9。
+
 ### 1.3 逐项结论速览
 
 | # | 工作项 | 结论 | 与 T-002c 相比 |
@@ -34,6 +36,8 @@
 | 8 | Rust 可复刻性 | RSA/AES/MD5/签名/设备指纹/会话读写**全部可复刻**；无需 Kotlin 传网盘特有参数 | 新结论 |
 | 9 | native 移植必要性 | **不需要**；无 ADR 需要提交 | 新结论 |
 | 10 | 整体四档 | **原生登录可行（静态可行，动态未验证）** | 由「需攻关」改为「可行」 |
+
+> §1.3 表中第 6 行（短信「可独立实现」）已被 §15.7.2 修正为「需攻关」；第 7 行（扫码）保留「可独立实现」但补动态前提。其余各行不受影响。
 
 ### 1.4 必须与结论一起读的三条限制
 
@@ -370,7 +374,7 @@ if (TextUtils.isEmpty(sofireAppKey)) {
 | `libmsaoaidsec.so` + `libmsaoaidauth.so` | 622592 / 376832 B | `classes3/sources/com/baidu/helios/ids/oid/a.java:34` | MSA OAID 获取（`com.bun.miitmdid`） | **无** | 与 `di` 的 OAID 相关字段无关（40 字段里无 oaid 位；`c3_oaid` 只出现在业务拦截器 `ex/n3.java`） | **不影响** |
 | `libjni-kernel.so` | 10017264 B | `classes3/sources/com/baidu/library/P2P.java:170/:191/:203/:213/:239` | P2P / 下载加速 | **无** | — | **不影响** |
 | `libjni-kservice.so` | 34179392 B | `classes2/sources/lp/___.java:12-24`（拼动态插件目录 `p2psdk/jni-kservice_<version>`，实现 `PluginExecutor.SubExecutor`） | 动态插件（下载加速） | **无** | — | **不影响** |
-| `libbaiduprotect_sec.so` | 133168 B | 未在本次范围内做调用点定位（不在任务要求的库清单的登录关联判定内） | — | **待确认** | — | 标 **待确认**：本次未追其 Java 侧调用链，不作为登录阻断证据，也不排除 |
+| `libbaiduprotect_sec.so` | 133168 B | 未在本次范围内做调用点定位（不在任务要求的库清单的登录关联判定内） | — | ~~**待确认**~~ **已闭环（§15.1）** | — | 标 **待确认**：本次未追其 Java 侧调用链，不作为登录阻断证据，也不排除。<br>**2026-11-29 补充收口**：已完整追踪，结论为仅服务人脸 WBAES、不参与请求构造、不阻断 A/B/C（见 §15.1.6）；同族 `libbaiduprotect_sec_jni_facect.so` 一并核对，APK 内不存在任何 `libbaidusec*` 文件 |
 
 ### 5.1 一个必须记录的静态盲区
 
@@ -759,14 +763,16 @@ T-002c 只记「其他 native 安全组件待确认」；本次把 6 个库的**
 | 2 | `diExceptIndex` 线上实际下发值 | 动态验证 | 服务端下发 + 本地缓存 | 抓一次 `sapi_options` 下发响应（**本任务禁止抓包**）；或按默认空串先实现 |
 | 3 | `BAIDUID` 是否必须有效 | 动态验证 | `buildNaCookie` 允许空串，但服务端是否接受未知 | 同上 |
 | 4 | `AccountUtils.O/P/Q`（sofire 配置）是否被其它类赋值 | 静态未闭环 | 本次只确认 `AccountUtils.java` 内无赋值点 | 全量 grep 反射写法或跨类 setter；**不构成登录阻断**，优先级低 |
-| 5 | `libbaiduprotect_sec.so` 的 Java 侧调用链 | 静态未做 | 不在任务要求的库清单的登录关联判定内 | 若后续发现登录被风控挑战，再回头查 |
+| 5 | ~~`libbaiduprotect_sec.so` 的 Java 侧调用链~~ **已关闭（§15.1）** | — | 已于 2026-11-29 补充收口完成 | 结论：仅服务人脸 WBAES，不阻断 A/B/C |
 | 6 | `libfire.so` / `libsofiresec.so` 内部算法 | 静态未做 | 超出本任务范围（只判关联，不逆向） | 仅当需要精确复刻 `sf_zid` 到「真实 zid」级别时才有必要；当前用兜底值即可 |
-| 7 | 短信验证码的发送接口（获取验证码） | **本次未取证** | T-006 只要求审查「登录路径」，`dynamicPwdLogin` 上游的「发短信」接口本次未追 | 下一步若实现 B 路径需补：验证码请求接口 + 频控 |
-| 8 | 扫码路径的 `hostDeviceId` 生成规则 | 静态已见生成但不完整 | `getQrCodeImage` 只透传，未见生成实现 | 任意稳定随机串推测可用（**推测**）；需动态验证 |
+| 7 | ~~短信验证码的发送接口（获取验证码）~~ **已取证（§15.2.1）**，但完整短信登录仍开放 | 静态已到接口级；**阻断在 WebView 人机验证** | 发码 = `POST {wap}/wp/api/login/sms`；前置 `POST passport.baidu.com/cap/init` + `pass-machine.html` | 需动态验证人机验证触发条件；按 AGENTS.md 第 9 条本项目不得用 WebView 完成登录 → B 路径判「需攻关」 |
+| 8 | ~~扫码路径的 `hostDeviceId` 生成规则~~ **已关闭且结论反转（§15.3）** | — | 2026-11-29 补充收口完成 | **官方客户端从不赋值，恒为 `null`，参数被丢弃**（全仓 `.hostDeviceId =` 赋值 0 命中）；本项目按官方缺省不传即可。原「任意稳定随机串推测可用」的推测**作废** |
 
 ### 13.1 一条必须说清的范围边界
 
-**本任务没有验证「短信验证码怎么发出去」。** `realDynamicPwdLogin` 是「用户已经拿到验证码之后」的那一步。发码接口（`/v2/api/getvoicecode` 一类）本次未定位、未追调用链。 → 若要实现 B 路径，还需补一个小任务。这是本节最重要的未完成项。
+**本任务没有验证「短信验证码怎么发出去」。** `realDynamicPwdLogin` 是「用户已经拿到验证码之后」的那一步。发码接口本次未定位、未追调用链。
+
+> **2026-11-29 补充收口**：发码接口已定位 —— `POST {wap}/wp/api/login/sms`（`SapiAccountRepository.java:1632-1634`），前置 `POST https://passport.baidu.com/cap/init`；提交侧实测走 `smsWapLogin` → `POST {wap}/wp/api/login`（**不是** `/v2/sapi/login`）。完整短信登录仍**不能判可独立实现**，阻断点是 `pass-machine.html` 的 WebView 人机验证。详见 §15.2、§15.7.2。
 
 ---
 
@@ -833,6 +839,400 @@ reverse/baidu/
 
 ---
 
+## 15. T-006 补充收口（2026-11-29）
+
+> 本节由「T-006 补充收口」任务追加。**§1–§13 的原文一律保留不改**，凡与本节冲突的表述，以本节为准，并在 §15.9 汇总登记。
+> 本节只做静态取证：未登录、未发请求、未抓包、未使用任何真实凭据；`reverse/` 不进 Git。
+
+### 15.0 为什么需要补这一节
+
+T-006 主体取证完成后复核发现四处证据没有闭环，且有三条结论被过度概括：
+
+| # | 缺口 | 本轮处理结果 |
+|---|---|---|
+| 1 | `libbaiduprotect_sec.so` 只标「待确认」，未追加载与调用链 | **已闭环**（§15.1），结论：仅服务人脸 WBAES，不阻断 A/B/C |
+| 2 | 短信只取了「拿到验证码之后」的提交段，发码接口未取证 | **发码已取证到接口级**（§15.2），但完整短信登录**仍不能判可独立实现** |
+| 3 | 扫码 `hostDeviceId` 只记「客户端生成」，未定位生成规则 | **已闭环且结论反转**：官方客户端**从不赋值**，恒为 `null`（§15.3） |
+| 4 | `cuid` 只写「ANDROID_ID 派生或自生成 UUID」 | **已定位官方算法**（§15.4），但派生字段 `i()` 涉及反射 PRNG，**当前无法精确复刻** |
+| 5 | 「三条路径均可独立实现」 | **A 保留可行；B、C 降级为条件性结论**（§15.7） |
+
+### 15.1 `libbaiduprotect_sec.so` 完整追踪
+
+#### 15.1.1 文件与依赖事实（已验证，`readelf` / `sha256sum` / `strings` 实测）
+
+| 文件 | 大小 | SHA-256 | 类型 | `NEEDED` |
+|---|---|---|---|---|
+| `lib/arm64-v8a/libbaiduprotect_sec.so` | 133168 B | `2e2f74f82136a8d6f9763ac07ebf6feba8aa11bf4131dc8c0ba91a080ba5ec68` | ELF64 aarch64，stripped | `liblog` `libc` `libm` `libstdc++` `libdl` |
+| `lib/arm64-v8a/libbaiduprotect_sec_jni_facect.so` | 137264 B | `b4ba82eb554064a0260c6a10dc744362c31a305dd4999f2528f2db7270cc3e5b` | ELF64 aarch64，stripped | `liblog` `libc` `libm` `libstdc++` `libdl` |
+
+- APK 内只有 arm64-v8a 一个 ABI（`split_config.arm64_v8a.apk`，65 个 `.so`）。
+- **依赖方向**：把 65 个 `.so` 全部 `readelf -d` 扫一遍，唯一 `NEEDED` 指向 `libbaiduprotect_sec_jni_facect.so` 的是 `libbd_pass_face_sdk.so`（1235136 B）；**没有任何库 `NEEDED` `libbaiduprotect_sec.so`**。
+- 全库 `strings` 搜 `libbaiduprotect_sec.so`，只在该库自身的 `SONAME` 出现 → **不存在 dlopen 字面量**。
+
+#### 15.1.2 符号与注册机制（已验证）
+
+| 库 | `dynsym` 导出 | `Java_` 导出 | `JNI_OnLoad` | `RegisterNatives` |
+|---|---|---|---|---|
+| `libbaiduprotect_sec.so` | 91 个，全部 `_0x` 前缀混淆名（如 `_0x5qgOQ` / `_0xhApNi` / `_0xTDqBS` / `_0xXAvZv`） | **0** | **无** | **无** |
+| `libbaiduprotect_sec_jni_facect.so` | 7 个 `Java_` + 同族 `_0x` 集 + `gsecf_vfacect` | **恰 7 个** | 无 | 无 |
+
+- `libbaiduprotect_sec.so` 的符号含 `_ZTS8_0x5XJdUIL9keyLength128EE`、`_ZN8_0xq3YG48_0xAJXCWIL9keyLength128EEEiR10WaesTablesIXT_EEPh` → **WBAES（白盒 AES-128）C++ 实现**，纯 C++ 库，自身不做 JNI 注册。
+- `libbaiduprotect_sec_jni_facect.so` 的 7 个导出：`Java_com_baidu_protect_crypto_facect_WBAESCipherImplement_{initKeyDataFile, initKeyDataMemory, encrypt, decrypt, encryptFile, decryptFile, destroyContext}`。
+- 两库各自独立编译同源代码（facect 的 `UND` 里 0 个 `_0x` 符号、无任何非 libc 的 `UND`，且不 `NEEDED` sec.so）→ **运行期不互相加载**。
+
+#### 15.1.3 加载入口（两条，第二条为 T-006 遗漏）
+
+**入口 1：静态 `loadLibrary`（全 dex 唯一 `baiduprotect` 的 `loadLibrary`）**
+
+- `reverse/baidu/sources/classes15/sources/com/baidu/protect/crypto/facect/WBAESCipherImplement.java:17` → `System.loadLibrary("baiduprotect_sec_jni_facect")`。
+
+**入口 2：动态插件管理器 + `System.load(绝对路径)`**
+
+- 常量类 `reverse/baidu/sources/classes12/sources/kh0/____.java:21`：`public static final String c = "libbaiduprotect_sec.so"`。
+- 该类注释 `SourceDebugExtension` 显示原始来源 `com/baidu/netdisk/service/album/plugin/logic/model/NativeLibExecutor`，`@Tag("NativeLibExecutor-DynamicPluginManager")`。
+- 同类常量：`a = libncnn.so`、`b = libface_landmark.so`、`c = libbaiduprotect_sec.so`、`d = libopencv_java4.so`、`e = model_complex`、`f = model_simple`、`______ = libc++_shared.so`。
+- `kh0/____.java:126-223` 方法 `c(String)` 按文件名 switch 归类，生成 face-landmark 插件的 `soFileList`。
+- 实际加载点 `reverse/baidu/sources/classes14/sources/com/mars/united/intelligent/face/landmark/SDK.java:163-173`：对 `ft1.C_.b(config)` 的每个元素，以 `/` 开头则 `System.load(str)`，否则 `System.loadLibrary(str)`。
+- 加载顺序表 `reverse/baidu/sources/classes14/sources/ft1/C_.java:263` 方法 `b(Config)`：`Config` 为 null 或无 `soFileList` 时返回 `{c++_shared, baiduprotect_sec, opencv_java4, ncnn, face_landmark}`；有 `soFileList` 时按名匹配这 5 类，**缺任一抛 `IllegalStateException`**（「so protect file is not exist」）。`ft1/C_.java:27`：`public static final String a = "baiduprotect_sec"`。
+- **该动态插件链路在本 APK 内不可用**：`split_config.arm64_v8a.apk` 内只有 `lib/arm64-v8a/libopencv_java3.so`（17889264 B），**没有 `libncnn.so` / `libface_landmark.so` / `libopencv_java4.so` / `libc++_shared.so`**（5 个里 4 个名不匹配）。
+- landmark SDK 的调用方只有 3 个类：`com/mars/united/intelligent/face/landmark/{SDK.java, C_.java, FaceLandmarkService.java}`，全仓无其它引用 → 属**相册人脸打点**功能。
+
+#### 15.1.4 登录前初始化阶段是否执行（已验证）
+
+- `reverse/baidu/sources/classes2/sources/com/baidu/sapi2/SapiAccountManager.java:148-154` 用 `try { Class.forName("com.baidu.pass.face.platform.FaceSDKManager"); new PassBiometricCall().initPassBioSDK(sapiConfiguration); } catch (Exception) { Log.e("SDK_INIT", "VIS SDK可能未集成…"); sapiConfiguration2.supportFaceLogin = false; }`。
+- 该链最终会加载 `libbd_pass_face_sdk.so`（`NEEDED` 含 `libbaiduprotect_sec_jni_facect.so`）→ **登录 SDK 初始化阶段确实会加载 jni_facect 库**。
+- 但它只提供 7 个 WBAES Cipher 方法（`initKey*` / `encrypt*` / `decrypt*` / `destroyContext`），**不修改请求参数、不参与签名、不修改设备环境**。
+
+#### 15.1.5 唯一 Java 消费方（类引用闭包，已验证）
+
+- `reverse/baidu/sources/classes12/sources/com/baidu/sofire/utility/WbEncryptUtil.java:53` → `Cipher.getInstance("WBAES", null)`，内部转调 `WBAESCipherImplement`。
+- 调用方只有人脸 SDK：`classes12/sources/com/baidu/sofire/face/a/{b.java:1370, b.java:1521, f.java:1435, f.java:1521, m.java:586, m.java:628, q.java:610, q.java:652}` 与 `classes12/sources/com/baidu/sofire/face/b/b.java:116`，用于 `transcheckdata` 与 face 数据加密。
+- 密钥路径 `classes15/sources/com/baidu/pass/face/platform/FaceSDKManager.java:295` → `WbEncryptUtil.setKeyPath(resRootPath + "pass-key.face-android")`。
+
+#### 15.1.6 最终结论表（任务要求的 11 行）
+
+| 项目 | 证据 |
+|---|---|
+| so 文件位置与 ABI | `lib/arm64-v8a/libbaiduprotect_sec.so`（133168 B，sha256 `2e2f74f8…ec68`）与 `lib/arm64-v8a/libbaiduprotect_sec_jni_facect.so`（137264 B，sha256 `b4ba82eb…3e5b`）；仅 arm64-v8a |
+| Java 加载入口 | ①`WBAESCipherImplement.java:17` `System.loadLibrary("baiduprotect_sec_jni_facect")` ②`kh0/____.java:21` 常量 `libbaiduprotect_sec.so` → `face/landmark/SDK.java:163-173` `System.load`（动态插件路径，本 APK 内缺 4/5 个依赖 so，不可用） |
+| 类初始化 / SDK 初始化 | `SapiAccountManager.java:148-154` 用 `Class.forName` + `try/catch` 初始化人脸 SDK（失败仅置 `supportFaceLogin=false`，不中断登录） |
+| Java 调用方 | 静态库：`com.baidu.protect.crypto.facect.WBAESCipherImplement` ← `com.baidu.sofire.utility.WbEncryptUtil.java:53` ← `com.baidu.sofire.face.*`（9 处）。动态插件：`com.mars.united.intelligent.face.landmark.*`（3 类，相册人脸打点） |
+| JNI 方法与 native 导出 | sec.so：91 个 `_0x`，**0 个 `Java_`**、无 `JNI_OnLoad`、无 `RegisterNatives`；jni_facect.so：**恰 7 个 `Java_com_baidu_protect_crypto_facect_WBAESCipherImplement_*`** |
+| 是否存在动态加载 | **是**，但只有一条：face-landmark 插件管理器按 `soFileList` 用 `System.load` 加载；该链路在本 APK 内**因缺少 4 个依赖 so 而走不通** |
+| 账号密码路径关联 | **无**。A 路径 8 跳均不触及 `WbEncryptUtil` / `WBAESCipherImplement` / `face/landmark/*`（类引用闭包 + `NEEDED` 依赖图双重核对） |
+| 短信路径关联 | **无**。B 路径（发码 `/wp/api/login/sms`、提交 `/wp/api/login`）同上 |
+| 扫码路径关联 | **无**。C 路径（`/v2/api/getqrcode` → `/channel/unicast` → `/v2/api/bdusslogin`）同上 |
+| 是否影响认证或请求构造 | **否**。该库只做白盒 AES 加解密原语（`Cipher` 实现类），不参与参数构造、不参与签名、不写设备指纹 |
+| 最终判断 | **已排除对 A/B/C 的阻断**；保留「静态未知（无运行动态验证）」。理由：结论基于**类引用闭包 + `NEEDED` 依赖图 + 无 dlopen 字面量**三重证据，**不是**「搜不到调用点」 |
+
+#### 15.1.7 「`libbaidusec*`」的覆盖核对
+
+- **APK 内不存在任何名为 `libbaidusec*` 的文件**（`unzip -l` 全表核对）。T-006 报告中所写 `libbaidusec*`，实际对应本节这两个库，已全覆盖。
+- 同族需要一并交代的库（均已在 T-006 覆盖，本节不重复取证）：
+
+| 库 | 大小 | 归属 | 与登录的关系 |
+|---|---|---|---|
+| `libmsaoaidsec.so` | 622592 B | MSA OAID（`classes3/sources/com/baidu/helios/ids/oid/a.java:34` 加载） | 无（`di` 40 字段里无 oaid 位） |
+| `libnetdisk-security.so` | 1082464 B | 业务 API 加签（`ex/n3.java:49`，上游拦截器 `ex/m1.java:294`） | 无（登录不走该拦截器） |
+| `libnetdisk-security-rand.so` | 2884608 B | 业务 API `rand` 参数（`ServerApiKt.java:23` 注册拦截器） | 无 |
+| `libnetdisk-signature-check.so` | 18264 B | APK 签名校验（`CertVerifier.java:38`） | 无 |
+| `libsofiresec.so` | 1235496 B | sofire 旁路（`SONAME = libsofire.so`；Java 侧**无** `loadLibrary("sofiresec")`） | 只影响 `di` 索引 34，有纯 Java 兜底 |
+
+### 15.2 短信验证码完整流程
+
+#### 15.2.1 发码链路（已验证到接口级，6 列步骤表）
+
+| 步骤 | 文件:行号 | 接口 / 方法 | 参数来源 | native 依赖 | 证据状态 |
+|---|---|---|---|---|---|
+| 1 UI「获取验证码」 | `classes4/sources/com/baidu/sapi2/newlogin/widget/NewLoginSmsLayout.java:158-169` | `d(String)`，日志 `sms_code_resend: action=request` | 用户输入手机号 | 无 | 已验证 |
+| 2 构造发码 helper | 同上 `:169` | `new LoginSendSmsHelper(context, 1, o, j, str, i, h, !j, p).a(new HashMap<>(), …)` | 同上 | 无 | 已验证 |
+| 3 helper 转调 | `classes4/sources/com/baidu/sapi2/newlogin/helper/LoginSendSmsHelper.java:161-169` | `SapiAccountManager.getInstance().getAccountService().doCapInitAndGetLoginSms(b, c, d, map, l)` | map 可带 `ds`/`tk`/`isValidate`/`isOver` | 无 | 已验证 |
+| 4 前置人机令牌（可选） | `classes2/sources/com/baidu/sapi2/SapiAccountService.java:173-193` | `doCapInitAndGetLoginSms`：`ds`/`tk` 都空 → `ValidationUtil.capInit(...)`；**失败也继续** | `ValidationUtil.java:8-16` 的 `ak` / `scene="test"` / `tplExtraCode="111"` | 无 | 已验证 |
+| 5 人机初始化请求 | `classes18/sources/com/baidu/validation/ValidationManager.java:5`、`:93-104` | `POST https://passport.baidu.com/cap/init`，body `tt`/`refer`/`ak`/`scene`/`ver="2"`，走 `HttpHashMapWrap`（含公共参数与 `sig`）+ `ParamsUtil.buildNaCookie` | `Referer` = `m143_()` 生成的人机页 URL（`:84`） | 无 | 已验证（响应 `code==0` 取 `data.tk`/`as`/`ds`） |
+| 6 发码请求 | `classes2/sources/com/baidu/sapi2/SapiAccountRepository.java:1530`，端点 `:1632-1634` | `POST {wap}/wp/api/login/sms` | 参数见下 | 无 | 已验证 |
+
+**第 6 步参数（`SapiAccountRepository.java:1536-1588`，已验证）**：`alg=v3`、`adapter=3`、`vstrswitch=1`、`cv=170601`、`isEncrypted=1`、`lang`、`liveAbility=1` + `scanface=1` + `supFaceLogin=1`（当 `supportFaceLogin`）、`support_photo=1`（当 `supportPhoto`）、`logLoginType=sdk_login`、`time`（秒）、`t`（毫秒）、`session_id = md5(UUID+millis)`、`nalogin=1`、`enableExternalWeb=0`、`username`（RSA 加密）、`countrycode`（非 `0086` 时）、`encryptedId` + `uid` + `encryptedType=living`、`isValidate`/`isOver`（来自 map）、`s`/`k`（来自 map 的 `ds`/`tk`）。
+
+**是否需要 `di` / `sig` / `appSignKey` / `tpl`**：**全部需要**。发码走 `HttpHashMapWrap`（签名唯一调用点 `classes4/sources/com/baidu/sapi2/httpwrap/HttpClientWrap.java:86-88`），且带 `ParamsUtil.buildNaCookie`（含 `cuid` 与 `DVIF` cookie）。
+
+**错误码（`classes4/sources/com/baidu/sapi2/result/GetLoginSmsResult.java`，已验证）**：`50020` / `50021` / `500002` / `50052` 触发人机验证、`50092` 短信阈值/频控、`71100` 触发注册、`400603` 注册、`400800` 注册弹窗、`50051` 安全短信弹窗、`97101`、`-205` / `-501` 解析失败；`data.smsCodeLength` 给验证码位数。
+
+#### 15.2.2 提交链路（**修正 T-006 的端点记录**）
+
+| 步骤 | 文件:行号 | 接口 / 方法 | 说明 | 证据状态 |
+|---|---|---|---|---|
+| 1 提交入口 | `classes4/sources/com/baidu/sapi2/newlogin/widget/NewLoginSmsLayout.java:178-207` | `LoginSmsWapLoginHelper.doSmsWapLogin(true, b, h, i, str, listener)` | `str` = 用户输入的验证码 | 已验证 |
+| 2 helper 转调 | `classes4/sources/com/baidu/sapi2/newlogin/helper/LoginSmsWapLoginHelper.java:97-103` | `getAccountService().smsWapLogin(k, z, c, d, e, code)` | — | 已验证 |
+| 3 组装参数 | `classes2/sources/com/baidu/sapi2/SapiAccountRepository.java:2710-2723` | `smsWapLogin`：`encryptedId` / `encryptedType=living` / `username`(RSA) / `sms="1"` / `smsvc=<验证码>` / `countrycode` → `wapLogin(1, z, …)` | — | 已验证 |
+| 4 追加公共参数 | 同文件 `:2873-2901` | `wapLogin`：`alg=v3`、`adapter=3`、`cv=170601`、`isEncrypted=1`、`lang`、`liveAbility`/`scanface`/`supFaceLogin`、`support_photo`、`logLoginType=sdk_login`、`time`、`t`、`session_id`、`nalogin`、`needNaNextUrl=1`、`enableExternalWeb=0` | — | 已验证 |
+| 5 实际端点 | 同文件 `:1126-1128` | `POST {wap}/wp/api/login` | 与账号密码路径**同一端点**，区别是带 `sms=1` + `smsvc` | 已验证 |
+| 6 响应解析 | 同文件 `:2873-2901` → `BaseWapLoginResult.handleAccountAndPwdLoginResult:23-32` → `SapiAccountService.java:542`、`:570` | 读 `errInfo.no`（`!=0 && 400032` 判失败），再 `SapiCoreUtil.parseAccountXmlToResponse` 解析 `<client>` XML 得 `bduss`/`ptoken`/`stoken` | — | 已验证 |
+
+**修正点**：T-006 记「短信走 `/v2/sapi/login`（`realDynamicPwdLogin`）」。实测新版登录 UI 走的是 **`smsWapLogin` → `/wp/api/login`**；`realDynamicPwdLogin` 只由旧 `dynamicPwdLogin` 链使用（`SmsPager.java:347`、`SmsLoginView.java:455`、`SmsLoginAccount.java:381`、`SmsLoginSamsungView.java:381`）。两条链都真实存在，但**网盘 App 现用 UI 走前者**。
+
+**发码返回的 `ds`/`tk` 不流向提交**：`LoginSendSmsHelper.java:120-122`（与 `:49-51`）成功后执行 `finishValidation()` 并 `put("validation_times","0")`、`put("ds","")`、`put("tk","")`。
+
+#### 15.2.3 完整短信登录必须分三段判定
+
+| 段 | 结论 | 依据 |
+|---|---|---|
+| 发码请求 | **已到接口级**（端点、参数、签名、错误码、前置 `cap/init` 全部静态可读） | §15.2.1 |
+| 收到验证码后的提交与会话换取 | **已到接口级**（`/wp/api/login` + `sms`/`smsvc`，响应 XML → `bduss`/`ptoken`/`stoken`） | §15.2.2 |
+| **完整短信登录能否独立实现** | **暂不能判为「可独立实现」** | 见下 |
+
+**不能判「可独立实现」的三条理由**：
+
+1. **发码前置人机验证是 WebView 页面**。`passport.baidu.com/cap/init` 只取 `ds`/`tk`/`as` 三个令牌（失败不阻断），真正的人机墙是 `https://wappass.baidu.com/static/activity/pass-machine.html`：`classes18/sources/com/baidu/validation/activity/ValidationActivity.java:319-321` 用 `ValidationWebView` `loadUrl(...)`、`:179` `evaluateJavascript("javascript:window.machine_sdk.show()")`。**通过条件是服务端下发 + 页面内 JS 风控，客户端静态无法复刻**；且本项目按 AGENTS.md 第 9 条禁止用 WebView 完成登录。
+2. **触发时机由服务端决定**：错误码 `50020`/`50021`/`500002`/`50052` 才拉起人机页，静态无法预测何时触发。
+3. **频控与设备校验是服务端行为**：`50092` 为短信频控错误码，规则不可静态得出。
+
+→ 与坚果云 R27（人机验证依赖腾讯闭源 Web 服务）**同类**，已在 `docs/RISKS.md` 登记。
+
+### 15.3 扫码路径的 `hostDeviceId`（结论反转）
+
+#### 15.3.1 事实（已验证）
+
+| 项目 | 证据 |
+|---|---|
+| 生成函数 | **不存在**。`classes6/sources/com/baidu/sapi2/dto/GetQrCodeImageDTO.java:9` 与 `QrLoginStstusCheckDTO.java:6` 都只声明 `public String hostDeviceId;`（无初值）；**全仓 `.hostDeviceId =` 赋值 0 命中** |
+| 调用链 | 客户端从不赋值 → 恒为 `null` → `HttpHashMap.put(key, null)`（`classes15/sources/com/baidu/pass/http/HttpHashMap.java:24-26`） |
+| 数据来源 | **无来源**（不是系统信息、不是 SDK 生成器、不是持久化 ID、不是随机数） |
+| 是否持久化 | 否 |
+| 是否需要跨请求保持一致 | **不适用**（值恒 `null`，参数根本不出现） |
+| 是否属于通用设备信息 | 否 |
+| Rust 是否可以独立生成 | **不需要生成**，按官方缺省不传即可 |
+| 是否存在 native 依赖 | 否 |
+
+#### 15.3.2 `null` 参数被丢弃（已验证）
+
+- `classes15/sources/com/baidu/pass/http/a.java:333-353` 私有方法 `a(HttpHashMap)` 只拼接 `!TextUtils.isEmpty(key) && !TextUtils.isEmpty(value)` 的项。
+- GET 分支 `a.java:164-167`：仅当拼出的串非空才 `url += "?" + str`。
+- multipart 分支 `a.java:143-147` 同样跳过空值。
+- → `hostDeviceId = null` 时该参数**完全不出现**在 URL/表单里。
+
+#### 15.3.3 服务端不返回该字段
+
+`classes4/sources/com/baidu/sapi2/result/GetQrCodeImageResult.java` 只有 `channelId` / `contentUrl` / `imageUrl` / `prompt` 四个字段，**没有 `hostDeviceId`**。
+
+#### 15.3.4 使用点（仅 4 处，全部是 `put` 透传）
+
+| 位置 | 动作 |
+|---|---|
+| `classes2/sources/com/baidu/sapi2/QrCodeService.java:325` | `getQrCodeImage` → `put("hostDeviceId", dto.hostDeviceId)` |
+| 同文件 `:350` | `getQrCodeLoginWithEnuidImage` → 同上（**被扫端**用途，本项目不用） |
+| 同文件 `:360` | `getQrLoginResult` → `put("hostDeviceId", str2)`，`str2` 来自 `:176` 的 `qrLoginStstusCheckDTO.hostDeviceId` |
+| 同文件 `:176` | `qrLoginStatusCheck` 回调 → 构造 `QrLoginStstusCheckDTO` 时透传 |
+
+#### 15.3.5 扫码五段各自状态
+
+| 段 | 状态 | 证据 |
+|---|---|---|
+| ① 二维码获取 | **已明** | `GET /v2/api/getqrcode`，参数 `lp` / `apiver=v3` / `tt` / `openPlatformId` / `encuid` / `needQrCodeContent` / `hostDeviceId`（`QrCodeService.java:306-327`）；`channelId = optString("sign")`（`:49`） |
+| ② 长轮询 | **已明** | `GET /channel/unicast`，参数 `apiver=v3` / `callback=cb` / `channel_id` / `tt`，超时 **40000ms**（`:387-397`）；JSONP 剥离 `:146`；`status` 分支 `:152`、`:165-168`、`:170-177`、`:183` |
+| ③ `hostDeviceId` 生成 | **已闭环（官方不生成）** | §15.3.1–15.3.2 |
+| ④ 会话换取 | **已明** | `GET /v3/login/main/qrbdusslogin`（`isJoinCodeLogin=true`）或 `GET /v2/api/bdusslogin`，参数 `display=pcsdk` / `qrcode=1` / `bduss` / `tt` / `hostDeviceId`（`:354-365`）；回调 `:195-242` → `parseAccount` → `setPreLoginType(QR)` → `validate(account)` |
+| ⑤ 认证状态持久化 | **已明（与 A/B 同一链）** | `SapiAccountManager.validate:823-836` → `SapiContext.java:978-1016`（AES 加密 JSON 存 SharedPreferences + `SapiUtils.webLogin` 写 CookieManager） |
+
+**唯一仍未闭环的是「服务端是否接受 `hostDeviceId` 缺席」**，属动态验证，静态无法证明。
+
+#### 15.3.6 顺带修正：扫码**加** `sig`
+
+- T-006 §8.3/§8.7 记「扫码不加 `sig`、不传 `HttpHashMapWrap`」，**与实测不符**。
+- 实测：`QrCodeService` 三个扫码请求都经 `HttpClientWrap` → `buildParamDTO` → `httpHashMap.doSign(this.appSignKey)`（`classes4/sources/com/baidu/sapi2/httpwrap/HttpClientWrap.java:86-88`，全仓唯一 `doSign` 调用点）→ **扫码也加 `sig`**。
+- 但扫码三处 `get(...)` 的 cookie 参数都传 `(java.util.List) null` → **确实不带 cookie，也不带 `di`**。
+- 所以正确表述是：**扫码不发 `di`、不带 cookie，但加 `sig`**。
+
+### 15.4 `cuid` 的真实生成算法
+
+#### 15.4.1 逐跳表（已验证）
+
+| 跳 | 类:行号 | 动作 | 数据来源 | 是否持久化 |
+|---|---|---|---|---|
+| 1 | `classes12/sources/com/baidu/sapi2/utils/SapiUtils.java:268-282` | `getClientId(Context)`：`ServiceManager`/`isAccountManager`/`confignation` 任一为 null → 返回 null；`!isAgreeDangerousProtocol() && !isSupportBrowseMode()` → 返回 null | 配置 | — |
+| 2 | 同文件 `:352-366` | `getDeviceID(Context)`：同两道闸门，否则调 `com.baidu.android.common.util.DeviceId.getDeviceID(ctx)` | — | — |
+| 3 | `classes3/sources/com/baidu/android/common/util/DeviceId.java:102-104` | `getDeviceID` = `b(ctx).c()`（返回 `cesium.h.a` 对象） | — | — |
+| 4 | 同文件 `:138-153` | `b()` 双检锁单例，缓存 `d = a(context).c()`；构造 `cesium.____ h`、`cesium.h e = new h(ctx, new cesium.e.C_(ctx), h)`、`cesium.a f` | — | — |
+| 5 | 同文件 `:37-66` | `c()`：`e.h()` 加锁（`.lock`，100 次 × 100 ms）→ `e()` = `f()`（`e.m999_()` 读 `files/libcuid.so` 解密）否则 `g()`（读 `new File(ctx.getFilesDir(),"libcuid.so")` 经 `cesium.______._____(cesium.f.___.m998_(file))` 解密） | 本地文件 | 读 |
+| 6 | 同文件 `c()` 中段 | 判定：已有合法 cuid 且 deviceid 非空且不等于 `h.f()`；`cesium.a.__.m952_(cuid)` 判设备 ID 是否失效 | 内存/文件 | — |
+| 7 | 同文件 `c()` 分支 | 都不满足 → `a(null,null)` → `a(null)`（`e.e` 新建）→ `c(aVarA)` 异步落库；否则重建并 `______(aVarE.v())` | — | 写 |
+| 8 | `classes3/sources/com/baidu/cesium/h.java:377-400` | `e(String)` 新建：①`Settings.Secure.getString(resolver, "android_id")`（`vm.___.b = "android_id"`）②若 `cesium.a.__.__(str)` 为 false（黑名单 `0000000000000000`）→ `UUID.randomUUID().toString()` 且置 `z=true` | Android 系统 | — |
+| 9 | 同文件 | ③`cesium.____.C0037____.__(('com.baidu'+str).getBytes(), true)` = **MD5 大写十六进制**（`____.java:191-206`）④`z` 为真时 `"FUUID" + str__.substring(5)` ⑤写入 `aVar.f797_`（即 cuid），`__ = "O"`，`___ = i(str__)` | 算法 | — |
+| 10 | 同文件 `:274-282` | 派生字段 `i(String)` = `new cesium.f.C_("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567=", false, false).__(new cesium.a.C_().m953_(str.getBytes("UTF-8")))` | 算法 | — |
+| 11 | 同文件 `:262-272` | 机型指纹 `f()` = `MD5(Build.MODEL)` 小写十六进制 **第 3..15 位共 12 字符**，缓存于静态 `e` | Build.MODEL | 内存缓存 |
+| 12 | `classes3/sources/com/baidu/cesium/e/C_.java` | 持久化：目录 `dataDir/.cesium`，文件常量 `d = "libbh.so"`（**数据文件不是 so**）；JSON 键 `dik`/`v270fk`/`cck`/`ek`/`ctk`/`vsk`/`csk`/`pmk`/`hrk`/`ock`/`ifu` ↔ 字段 `f797_`/`__`/`___`/`d`/`____`/`______`/`a`/`c`/`_____`/`b`/`e`；写入经 `com.baidu.cesium.c.b.___().m987_()` 加密 | 文件 | 写 |
+| 13 | 同文件 `h.java:139-155` | `v()` 输出 `f797_ + "|" + (__ 空则 "0" 否则 __) + (__=="V" ? ___ ) + (_____ 非空 ? _____)` → 这是 `DeviceId.getCUID()`；实际传输用 `getClientId()` = 纯 `f797_` 值 | — | — |
+
+#### 15.4.2 黑名单与权限分支（已验证）
+
+- `classes3/sources/com/baidu/cesium/a.java:53-64`：`f745_` Base64 解码 = `DED0AFDB1AD0CC4CA974D5EBA0165141` / `C77D5D04D94F5F56C8A0A6DC3DBF240A`；`__` = `0000000000000000`。
+- `m952_(str)`：空 → false；等于任一黑名单（忽略大小写）→ false；否则 true（设备 ID 仍有效）。
+- `SapiUtils.getClientId` 的两道闸门：`isAgreeDangerousProtocol()` 或 `isSupportBrowseMode()` 之一为真才返回 cuid，否则返回 `null`（→ `di` 第 6/38 位发空串）。
+
+#### 15.4.3 无 native 依赖（已验证）
+
+`com/baidu/cesium` 全目录 54 个 `.java`，`grep loadLibrary|System.load|" native "` **0 命中**；`libbh.so` / `bohrium` 只是文件名/目录名字符串，APK 内**不存在**该 `.so`（`unzip -l` 核对）。
+
+#### 15.4.4 `t_cuid` 与 `cuid` 的关系（已验证）
+
+`classes12/sources/com/baidu/sapi2/utils/SapiDeviceInfo.java:53` 的 `getCookiesKeyList()` 第 39 位是 `t_cuid`；`buildDeviceTokens` 第 39 位取 `confignation.mTPLAppName`，为 null 时回落 `SapiUtils.getClientId(context)`（同文件 `:181-185`）。→ **`t_cuid` 的值是 TPL 子应用名，缺失时才用 cuid 顶上**；全仓无其它 `t_cuid` 读写点。
+
+#### 15.4.5 `i()` 派生字段的算法构成（已验证到类与方法，移植仍需工作量）
+
+- `classes3/sources/com/baidu/cesium/a/C_.java:9`：`public com.baidu.cesium.a.d[] f746_ = {new com.baidu.cesium.a.e(8, 0), new com.baidu.cesium.a.f(0, 1), new com.baidu.cesium.a.f(1, 1), new com.baidu.cesium.a.e(7, 1)};`；`:12-30` `m953_(byte[])` 按这 4 个算子迭代。
+- `classes3/sources/com/baidu/cesium/a/g.java` 是 **xxHash32**：常量 `a=16`、`b=13`、`c=-1640531535`、`d=-2048144777`、`e=-1028477379`、`f=668265263`、`g=374761393`；`:27-29` 小端读 4 字节。
+- `classes3/sources/com/baidu/cesium/a/f.java:6-17`：`f(int,int)` 设 `f753_=4294967295L`、`__=4`、`___=32`，`__(byte[],int,int)` 直接 `new g().____(...)`。
+- `classes3/sources/com/baidu/cesium/a/e.java:8-40`：用 `Class.forName(com.baidu.cesium.a.i.___(com.baidu.cesium.a.a.m956_()), true, Object.class.getClassLoader())` + `i.____(...)` 反射调用；`i.___(byte[])` = `new String(com.baidu.cesium.c.a.__.____(种子, 种子, bArr))`（对称密钥派生）。
+- `classes3/sources/com/baidu/cesium/a/a.java`：`m956_()` 返回 32 字节常量，`__()`/`___()` 各 16 字节。
+
+→ **`i()` = 自定义摘要（4 算子，含 xxHash32 与反射 PRNG）+ 自定义 Base32（字母表 `ABCDEFGHIJKLMNOPQRSTUVWXYZ234567=`）**。纯 Java 可移植、无 native，但需移植 `cesium.c.a.*` 的密钥派生与加解密，且本机无 Java 运行时可产测试向量。
+
+#### 15.4.6 `cuid` 的 Rust 复刻结论（五类分开说明）
+
+| 类别 | 内容 | 说明 |
+|---|---|---|
+| ① Rust 可按官方算法独立生成 | `MD5("com.baidu" + android_id)` 转大写十六进制；`FUUID` 前缀替换；机型指纹 `f()` = `MD5(Build.MODEL)` 小写 hex 第 3..15 位 | 纯算法，输入由 Kotlin 传两个通用字段 |
+| ② 必须 Kotlin 经 Android API 取 | `Settings.Secure.getString(resolver, Settings.Secure.ANDROID_ID)`、`Build.MODEL`、`UUID.randomUUID()`（回退分支） | 属通用系统信息，符合架构约束（网盘专有语义仍留 Rust） |
+| ③ 必须在本机持久化 | `cuid` 值本身（`f797_`）与伴生字段 `__`（当前恒 `"O"`）、`___`（`i()` 结果），否则每次启动都会生成新设备号 | 官方落在 `dataDir/.cesium/libbh.so`（加密 JSON）；本项目可用自己的存储，不必复刻其文件格式与加密 |
+| ④ 只能按分支处理 | `ANDROID_ID` 为 `0000000000000000` 或读不到 → `UUID.randomUUID()` + `FUUID` 前缀；命中黑名单 `DED0AFDB1AD0CC4CA974D5EBA0165141` / `C77D5D04D94F5F56C8A0A6DC3DBF240A` → 判设备 ID 失效并重建；`isAgreeDangerousProtocol()`/`isSupportBrowseMode()` 都为假 → cuid 发空串 | 三种分支行为已逐条落行号 |
+| ⑤ 当前无法精确复刻 | 派生字段 `i()`（`cesium.a.C_` 的 4 算子 + `cesium.a.e` 反射 PRNG + `cesium.c.a.*` 密钥派生 + 自定义 Base32） | 纯 Java 可移植但工作量与出错风险大，且**本机无 Java 运行时无法产测试向量**；若服务端不校验 `___` 该字段则可先用为空/占位，属待动态验证 |
+
+> 边界不变：**Rust 负责协议与算法，Kotlin 只提供通用系统信息**；百度专有参数不进 Kotlin。`t_cuid` 取 TPL 子应用名这条也属 Rust 侧常量，不跨边界。
+
+### 15.5 账号密码路径（A）补充取证
+
+#### 15.5.1 `libbaiduprotect_sec.so` 关联（已闭环）
+
+见 §15.1.6 —— **不影响 A 路径**。
+
+#### 15.5.2 `cuid` 与 `DVIF` cookie 的边界（已验证）
+
+| 项 | 事实 | 证据 |
+|---|---|---|
+| `cuid` cookie 名 | `"cuid"`（常量 `classes12/sources/com/baidu/netdisk/transfer/e.java:15`） | `ParamsUtil.java:74` |
+| `cuid` 值来源 | `SapiUtils.getClientId(context)`（即 §15.4 的 cuid） | `ParamsUtil.java:74` |
+| `DVIF` 值来源 | `SapiContext.getDeviceInfo()`（即 40 字段 `di` 的 AES 加密串） | `ParamsUtil.java:79` |
+| `DVIF` 性质 | **本项目客户端自行构造的设备信息 Cookie**，不是官方 App 的私有认证 Cookie | 构造点 `SapiDeviceInfo.getDeviceInfo:205-209` |
+| `BAIDUID` 值来源 | `SapiUtils.getCookie("https://baidu.com", "BAIDUID")`，即 `android.webkit.CookieManager` 里读；读不到返回 `""`（空串照发） | `SapiUtils.java:284-300`、`ParamsUtil.java:81` |
+| `BAIDUID` 的产生 | 服务端 `Set-Cookie` 回写（首次访问 baidu 域时），**不是客户端生成** | 同上 + 待动态验证 |
+| 认证 Cookie（BDUSS/STOKEN/PTOKEN） | 服务端在登录响应 XML 的 `<client>` 里下发（`SapiCoreUtil.parseAccountXmlToResponse`），**不是本项目构造** | `SapiAccountService.java:570-602` |
+
+**三类 Cookie 必须分开写，不得混为一谈**：
+
+| 类别 | 举例 | 谁产生 | 本项目可否自行构造 |
+|---|---|---|---|
+| 设备信息 Cookie | `cuid`、`DVIF` | 客户端按官方算法构造 | **可以**（本项目的实现，值来自 §15.4 的 cuid 与 §15.6 的 `di`） |
+| 站点标识 Cookie | `BAIDUID` | 服务端 `Set-Cookie` | **不可以**（只能由服务端下发；空串是否被接受待动态验证） |
+| 认证凭据 Cookie | `BDUSS`、`STOKEN`、`PTOKEN` | 服务端登录响应下发 | **不可以**（这就是登录要换的东西本身） |
+
+> 特别说明：本项目**不复用**浏览器或官方 App 的私有认证 Cookie。`DVIF` 虽名为 cookie，但它是本项目按官方算法自行计算的设备指纹载荷，与「复用官方会话」是两件事。
+
+### 15.6 `di` 分类表述校正（不改动已核实的 40 项与统计）
+
+> 原 §3 的字段分类数字（必需 22 / 条件 2 / 可选 16）与逐字段定性**全部保留有效**。本节只校正表达方式，避免被读成「可以随意删字段」。
+
+#### 15.6.1 四条必须写准的说法
+
+| # | 正确表述 | 为什么必须这样写 | 证据 |
+|---|---|---|---|
+| 1 | **40 个位置始终构造**，被 `diExceptIndex` 排除或灰度过滤时**填空字符串，不是删除字段** | 客户端 `buildDeviceTokens` 用 `TextUtils.join` 按固定长度拼接，缺位会导致后续位错位 | `SapiDeviceInfo.java:67-187` 共 **80 处 `add(`**，其中显式 `add("")` 12 处，其余 68 处是三元表达式 `(diExceptIndex.contains(N) \|\| !checkDiUpload(...)) ? "" : <值>` |
+| 2 | 「16 个恒空位」= **官方客户端发送空值**，**不表示服务端允许删除这些字段** | 客户端构造行为与服务端必需性是两个不同命题 | 同上 |
+| 3 | **客户端构造行为已完全可读；服务端对 40 项的实际校验强度全部待动态验证** | 本文所有 `di` 结论都只到「客户端怎么发」这一层 | — |
+| 4 | 「可选」**只描述官方客户端的取值来源**（常量/空串/条件），**不表示可以从加密载荷里随意删除** | 载荷是定长拼接后整体 AES 加密的，删位即破坏结构 | `getDeviceInfo:205-209`（`TextUtils.join` 后加密） |
+
+#### 15.6.2 一句话对照表
+
+| 说法 | 是否可用 | 原因 |
+|---|---|---|
+| 「可选字段可以不传」 | **不可用** | 该字段位置始终存在，值为空串 |
+| 「可选字段官方客户端发空串」 | 可用 | 与代码一致 |
+| 「服务端不需要这 16 项」 | **不可用** | 无任何静态证据，属动态验证范畴 |
+| 「40 个位置恒定，值可为空串」 | 可用 | 与代码一致 |
+
+### 15.7 三条登录路径修正后的各自结论
+
+> 判定原则：**以证据为准，不以维持原「可行」结论为目标**。任一路径只要还有「静态无法复刻且可能阻断」的环节，就不能写「可独立实现」。
+
+#### 15.7.1 A 账号密码
+
+| 检查项 | 状态 | 证据 |
+|---|---|---|
+| 请求链路完整 | 是（8 跳） | §6 |
+| RSA + MD5 签名 + `di` + Cookie 构造 | 全部已还原 | §6.3、§3、§15.5.2 |
+| 响应解析 | XML `<client>` → `bduss`/`ptoken`/`stoken` | `SapiCoreUtil.parseAccountXmlToResponse` |
+| 前置 `cap/init` | **存在**（`SapiAccountService.java:63-93`：`ds`/`tk` 都空时调 `ValidationUtil.capInit`；**失败也继续**） | 只取 `ds`/`tk`/`as` 三个令牌，**失败不阻断**，因此不构成阻断项 |
+| `libbaiduprotect_sec.so` 影响 | **无** | §15.1.6 |
+| `cuid` 算法 | 主值可复刻；派生字段 `i()` 需移植 | §15.4.6 |
+| Cookie 边界 | `cuid`/`DVIF` 自构造；`BAIDUID` 服务端下发（可为空）；认证 Cookie 服务端下发 | §15.5.2 |
+| native 阻断 | **无** | §4、§5、§15.1 |
+| **结论** | **原生登录可行（静态可行，动态未验证）** —— 三条路径中唯一保持原判的一条 |
+
+#### 15.7.2 B 短信验证码 —— 拆成三段，不得以半段等同整条
+
+| 段 | 结论 | 关键证据 |
+|---|---|---|
+| 发码请求 | **可独立实现**（端点、参数、签名、错误码全部静态可读） | §15.2.1 |
+| 收到验证码后的提交 | **可独立实现**（`/wp/api/login` + `sms=1` + `smsvc`） | §15.2.2 |
+| **完整短信登录** | **需攻关** | 前置人机验证是 WebView 页面 `pass-machine.html`（`ValidationActivity.java:319-321`、`:179`），通过条件由服务端与页面 JS 决定，客户端静态无法复刻；本项目按 AGENTS.md 第 9 条又禁止用 WebView 完成登录 |
+
+→ **由「可独立实现」降级为「需攻关」**。降级理由不是资料不足，而是**存在一条静态无法复刻的交互环节**。
+
+#### 15.7.3 C 扫码 —— 拆成五段
+
+| 段 | 结论 | 关键证据 |
+|---|---|---|
+| ① 二维码获取 | 已明 | §15.3.5 |
+| ② 长轮询 | 已明 | §15.3.5 |
+| ③ `hostDeviceId` 生成 | **已闭环：官方客户端不生成、恒 `null`、参数被丢弃** | §15.3.1–15.3.2 |
+| ④ 会话换取 | 已明（`/v3/login/main/qrbdusslogin` 或 `/v2/api/bdusslogin`） | §15.3.5 |
+| ⑤ 认证状态持久化 | 已明（与 A/B 同一 `validate` 链） | §15.3.5 |
+| **结论** | **原生登录可行（静态可行，动态未验证）** —— 但只在「服务端接受 `hostDeviceId` 缺席」这一条动态前提成立时；该前提待验证 |
+
+→ C 的本地证据已完整（五段全明），残留不确定性**只在服务端一侧**，与 A 同类，因此**保留「可行」但必须带条件句**。
+
+#### 15.7.4 三路径对照（修正后）
+
+| 路径 | 修正前（T-006） | 修正后（本节） | 变化原因 |
+|---|---|---|---|
+| A 账号密码 | 可独立实现 | **可独立实现** | 证据补齐，判定不变 |
+| B 短信验证码 | 可独立实现 | **需攻关** | 前置人机验证是 WebView + 服务端 JS，静态不可复刻 |
+| C 扫码 | 可独立实现 | **可独立实现（带动态前提）** | `hostDeviceId` 已闭环为「不生成」，残留仅在服务端 |
+
+### 15.8 百度整体四档结论（修正后）
+
+**原生登录可行（静态可行，动态未验证）——成立条件：走账号密码路径或扫码路径。**
+
+| 判据 | 结果 |
+|---|---|
+| 是否存在**至少一种**满足 AGENTS.md 第 9 条（APP 内原生、非 OAuth/WebView/cookie 复用）的路径 | **是**（A 与 C） |
+| 是否三条路径全部满足 | **否**（B 需攻关） |
+| native 是否仍构成阻断 | **否**（`libbaiduprotect_sec` 已排除，其余 6 库此前已排除） |
+| 是否有静态无法复刻的环节 | **有 1 处**：短信发码的前置人机 WebView（只影响 B） |
+| 整体档位 | **原生登录可行**（理由：存在 A、C 两条不含静态不可复刻环节的路径） |
+
+**不因此放宽的地方**（保持原 §12.4 与 §13）：服务端是否接受本项目构造的 `sig`/`di`、`diExceptIndex` 实际下发值、`BAIDUID` 是否必须非空、是否出现额外风控挑战、扫码服务端是否接受 `hostDeviceId` 缺席 —— **全部仍待动态验证**。
+
+### 15.9 对 §1–§13 的更正登记（原文不删，此处列差异）
+
+| 原位置 | 原文摘要 | 本节实测 | 处理 |
+|---|---|---|---|
+| §1.2 一句话版 | 「三条登录路径……均不依赖官方闭源 native；唯一未闭环的是服务端风控」 | native 结论正确；但 B 还有 WebView 人机验证未闭环 | **已被本节修正**，以 §15.7 为准 |
+| §1.3 表第 6 行 | 「短信路径：可独立实现（静态）」 | 降级为**需攻关** | 同上 |
+| §1.3 表第 7 行 | 「扫码路径：可独立实现（静态）」 | 保留，但补「`hostDeviceId` 官方不生成」与「服务端是否接受缺席待验证」 | 同上 |
+| §5 表 `libbaiduprotect_sec.so` 行 | 「待确认：本次未追其 Java 侧调用链」 | 已闭环，见 §15.1 | 同上 |
+| §7 全节 | 短信 = `realDynamicPwdLogin` → `/v2/sapi/login` | 网盘现用 UI 走 `smsWapLogin` → `/wp/api/login`（`realDynamicPwdLogin` 属旧链） | 同上 |
+| §8.2 `hostDeviceId` 行 | 「客户端生成，两个接口用同一个值」 | **客户端从不赋值，恒 `null`，参数被丢弃** | 同上 |
+| §8.3 / §8.7 | 「扫码不发 `sig`」 | 扫码**加 `sig`**、不发 `di`、不带 cookie | 同上 |
+| §9.3 `cuid` 行 | 「`Settings.Secure.ANDROID_ID` 派生或自生成 UUID」 | 官方是 `MD5("com.baidu" + android_id)` 大写；黑名单/空值才走 `FUUID` + 随机 UUID | 同上 |
+| §11 汇总表 B 行 | 可独立实现 | 需攻关 | 同上 |
+| §12.1 / §12.2 第 1 条 | 「三条都能」 | **A、C 能；B 需攻关** | 同上 |
+| §13 第 5 行 | `libbaiduprotect_sec.so` 静态未做 | 已闭环 | 同上 |
+| §13 第 7 行 | 短信发码接口未取证 | 已取证到接口级 | 同上 |
+| §13 第 8 行 | `hostDeviceId` 生成规则不完整，推测任意随机串可用 | **官方不生成**，不存在「推测可用」的问题 | 同上 |
+| §13.1 范围边界 | 「本任务没有验证短信验证码怎么发出去」 | 本轮已补（§15.2.1） | 同上 |
+| 附录 B 可信度分布 | 推测 2 条（其一是 `hostDeviceId` 生成规则） | 该推测已关闭 | 同上 |
+
+> **本节新增的推测条目**：0 条。新增的「待确认」条目 2 条：①服务端是否接受 `hostDeviceId` 缺席 ②短信人机验证在空设备/新设备上是否必然触发。
+
 ## 附录 A：与既有文档的关系（勘误登记）
 
 > 本节只登记差异，**不改写任何历史文档的结论**。
@@ -851,7 +1251,7 @@ reverse/baidu/
 | 可信度 | 条数（约） | 典型内容 |
 |---|---|---|
 | 已验证 | 绝大多数 | 全部 `文件:行号` 定位、`nm`/`readelf`/`objdump` 实测、`grep` 计数 |
-| 推测 | 2 | ①`AccountUtils.O/P/Q` 运行时可能为空（§4.3）②`hostDeviceId` 生成规则（§13 #8） |
+| 推测 | ~~2~~ **1**（2026-11-29 后） | ①`AccountUtils.O/P/Q` 运行时可能为空（§4.3）；~~②`hostDeviceId` 生成规则~~ **已关闭**：官方客户端不赋值（§15.3） |
 | 待确认 | 若干 | 服务端行为类全部标待确认（§12.4 七项） |
 
 **「已验证」只代表该静态代码/文件确实存在且本次实测读出，不代表服务端行为已验证。**

@@ -60,7 +60,7 @@
 | 网盘 | 登录类型 | 原生登录可行性 | 主要证据 | 缺失环节 / 攻关点 | 是否进入 MVP 候选 |
 |---|---|---|---|---|---|
 | 坚果云 | 账号密码（含验证码/二次验证分支） | **原生登录可行**（静态可行，动态未验证） | POST /mcmd/loginV2；密码仅 Base64；Authorization 注入链完整；无 OAuth/WebView | 服务端对非官方 UA 的校验策略、验证码触发条件 → 动态验证 | **是**（T-006 前唯一满足硬准入） |
-| 百度网盘 | 账号密码 / 短信验证码 / 扫码（三通道均有客户端协议） | **原生登录可行**（静态可行，动态未验证，T-006 复核） | POST {wap}/wp/api/login（RSA 加密账号密码）；POST /v2/sapi/login（短信）；GET /v2/api/getqrcode + GET /channel/unicast + GET /v2/api/bdusslogin（扫码）；bduss/ptoken/stoken 落 sapi_system | 服务端是否接受本项目构造的 sig / di、diExceptIndex 实际下发值、额外风控挑战 → 动态验证（T-006 已排除 native 阻断） | **是**（T-006 后硬准入满足；是否入选 MVP 仍由用户/重跑 Go/No-Go 决定） |
+| 百度网盘 | 账号密码 / 短信验证码 / 扫码（三通道均有客户端协议） | **原生登录可行**（静态可行，动态未验证；**仅 A/C 两条路径成立，B 降级为需攻关**，见 3.2 与 T-006 补充收口） | 账号密码 `POST {wap}/wp/api/login`（RSA 加密）；短信发码 `POST {wap}/wp/api/login/sms`、提交 `POST {wap}/wp/api/login`（`sms=1`+`smsvc`）；扫码 `GET /v2/api/getqrcode` → `GET /channel/unicast` → `GET /v2/api/bdusslogin`（或 `/v3/login/main/qrbdusslogin`）；bduss/ptoken/stoken 落 sapi_system | 服务端是否接受本项目构造的 sig / di、diExceptIndex 实际下发值、额外风控挑战；短信路径另有**前置 WebView 人机验证**（`pass-machine.html`）静态不可复刻 → 动态验证 | **是**（硬准入满足；B 路径不计入「可独立实现」） |
 | 夸克网盘 | 手机号短信验证码（第三方 SSO 属不合格路径，不计入） | **需攻关** | cas.sendSmsCodeForLogin / cas.loginWithSmsCode / cas.login；POST {base}/acs.wsg_access；返回 service_ticket | 请求体 M9 加密依赖 libencrypt.so；签名依赖聚安全 libsgmainso*.so（SecurityGuardManager）→ 这两个 native 静态不可复刻 | **条件候选**（攻关成本高） |
 | 阿里云盘 | 手机号短信 / 账号密码 / 扫码（Havana 账号 SDK） | **需攻关** | mtop.taobao.mloginService.smsSend / smsLogin、mtop.taobao.alibabaMLoginService.login；GET_WAP_LOGIN_COOKIES；Havana 二维码接口 | 每个登录请求注入 riskControlInfo（聚安全 native）；MTOP 签名（umt/wua）依赖 libsgmainso*.so / libsgsecuritybody*.so | **条件候选**（攻关成本高） |
 | 天翼云盘 | 未知 | **未知（需动态分析）** | dex 仅 3 个壳桩类、0 条登录线索；业务在 libapp.so + 爱加密载荷 | 需动态抓包 + Dart AOT 分析；libsecurity.so / libexecmain.so 职责未验证 | **否**（未知不进阶段 2） |
@@ -234,6 +234,8 @@
 
 ##### B. 短信验证码：POST /v2/sapi/login（SapiAccountRepository.java:263-298）
 
+> **2026-11-29 补充收口纠偏**：这是**旧链** `dynamicPwdLogin` → `realDynamicPwdLogin`。网盘 App 现用登录 UI（`NewLoginSmsLayout`）走的是 `LoginSmsWapLoginHelper` → `smsWapLogin` → **`POST {wap}/wp/api/login`**，带 `sms=1` + `smsvc=<验证码>`。发码侧为 `POST {wap}/wp/api/login/sms`。两段都已到接口级；本节保留原文以便对照，详见 `docs/evidence/baidu-login-deep-dive.md` §15.2。
+
 | 字段 | 说明 |
 |---|---|
 | crypttype | 6 |
@@ -252,7 +254,7 @@ AES 密钥：SapiDataEncryptor.java:12-19 createAESKey() 本地随机 16 位 [a-
 |---|---|---|---|
 | 取码 | classes2/sources/com/baidu/sapi2/QrCodeService.java:314-326 | GET /v2/api/getqrcode | lp(默认 pc) / apiver=v3 / tt / openPlatformId / encuid / needQrCodeContent / hostDeviceId，**cookie 传 null** |
 | 轮询 | 同文件 :387-397 | GET /channel/unicast | apiver=v3 / callback=cb / channel_id / tt（超时 40000 ms），响应是 JSONP，需 substring(3, len-2) 剥壳（:146） |
-| 换取 | 同文件 :354-364 | GET /v3/login/main/qrbdusslogin 或 /v2/api/bdusslogin | display=pcsdk / qrcode=1 / bduss(可空) / tt / hostDeviceId |
+| 换取 | 同文件 :354-364 | GET /v3/login/main/qrbdusslogin 或 /v2/api/bdusslogin | display=pcsdk / qrcode=1 / bduss(可空) / tt / hostDeviceId（恒 null，见下） |
 | 被扫端确认 | 同文件 :367-384 | POST /v2/sapi/qrlogin?lp=app | sign / cmd（**本项目作为扫码端不需要**） |
 
 → **扫码登录的 token 来源是客户端协议（/v2/api/bdusslogin），不是 WebView 抓取。**
@@ -261,7 +263,7 @@ AES 密钥：SapiDataEncryptor.java:12-19 createAESKey() 本地随机 16 位 [a-
 
 1. `channel_id` 来自取码响应的 `sign` 字段（`QrCodeService.java:49`）。
 2. `getQrLoginResult` 的 `bduss` 参数**允许为空**（只有「已有账号」场景才填），因此**不依赖任何既有登录态**。
-3. `QrCodeService.java` 全文**不含** `HttpHashMapWrap`（`grep` 0 命中）→ 扫码三个请求**不加 sig**；全文也**不含** `getDeviceInfo` → 扫码路径**不发 di**。这是三条路径里静态依赖最少的一条。
+3. `QrCodeService.java` 全文**不含** `HttpHashMapWrap`（`grep` 0 命中），但三个请求都经 `HttpClientWrap` → `buildParamDTO` → `httpHashMap.doSign(appSignKey)`（`HttpClientWrap.java:86-88`，全仓唯一 `doSign` 调用点）→ **扫码加 sig**；全文也**不含** `getDeviceInfo`，且三处 `get(...)` 的 cookie 参数都传 `null` → **扫码不发 di、不带 cookie**。<br>**2026-11-29 补充收口修正**：原文「扫码不加 sig」有误，`HttpHashMapWrap` 只是签名实现类的选择，不是是否签名的开关。
 
 #### 3.2.4 token 换取与存储
 
@@ -307,20 +309,23 @@ Sdata 头只在**自研网络栈**加：classes6/sources/com/baidu/netdisk/netwo
 | 3 | passport_core 六个 native | 全 dex **仅 7 处调用**（5 文件），**三条主链 0 处**；缺失时 `SapiConfiguration.java:553-575` 有 `catch (Throwable)` 兜底；`nm -D` 只有 6 个 `Java_` 导出、无 `JNI_OnLoad`、`RegisterNatives` 0 命中 | **已解：不阻断** | deep-dive §4 |
 | 4 | 服务端风控放行 + 6 类 native 风控库 | 6 个库的加载入口与唯一调用点全部落行号，**均不经过三条登录路径**（分别属业务 API 加签 / APK 签名校验 / P2P 下载 / MSA OAID / sofire 旁路） | **静态已解**；服务端风控仍动态 | deep-dive §5 |
 | 5 | 文件类接口的 Sdata | 本次未变（登录之外的缺口） | **仍开放**（不影响登录判定） | 本文 3.2.5 D |
+| 6 | `libbaiduprotect_sec.so` / `libbaidusec*` 是否阻断登录（**2026-11-29 补充**） | 已完整追踪：APK 内只有 `libbaiduprotect_sec.so`（133168 B）与 `libbaiduprotect_sec_jni_facect.so`（137264 B），**不存在任何 `libbaidusec*` 文件**；无库 `NEEDED` sec.so、无 dlopen 字面量；唯一 Java 消费方是 `WbEncryptUtil.java:53`（人脸 WBAES），A/B/C 三链均不触及 | **已解：不阻断** | `docs/evidence/baidu-login-deep-dive.md` §15.1 |
+| 7 | 短信发码接口与完整短信登录（**2026-11-29 补充**） | 发码 = `POST {wap}/wp/api/login/sms`（前置 `cap/init`）；提交 = `POST {wap}/wp/api/login` + `sms=1`+`smsvc`；**但前置人机验证是 `pass-machine.html` 的 WebView 页面，静态不可复刻** | **B 路径降级为「需攻关」** | 同文件 §15.2、§15.7.2 |
+| 8 | 扫码 `hostDeviceId`（**2026-11-29 补充**） | **官方客户端从不赋值，恒 `null`，`null` 参数被 `a.java:333-353` 丢弃**，本项目按缺省不传即可 | **已解**（原「客户端生成」表述作废） | 同文件 §15.3 |
 
 #### 3.2.7 结论与理由
 
 - 第 1 层：有 5 个原生登录 Activity（newlogin/activity/ 下）。
 - 第 2 层：**满足**。账号密码、短信、扫码三条通道都追到了实际 HTTP 请求与会话字段回填。
-- 第 3 层：**T-006 后满足**。三处此前的阻断点（tpl/appSignKey 取值、passport_core、di 裁剪）已分别落到常量、无调用点 + Throwable 兜底、逐字段分类；三条路径**均不依赖任何官方闭源 native**，也**均不依赖 OAuth / WebView / cookie 复用**。
+- 第 3 层：**A 与 C 满足；B 不满足**。三处此前的阻断点（tpl/appSignKey 取值、passport_core、di 裁剪）已分别落到常量、无调用点 + Throwable 兜底、逐字段分类；三条路径**均不依赖任何官方闭源 native**。但 **B 路径的前置人机验证是 `pass-machine.html` 的 WebView 页面**（`ValidationActivity.java:319-321`、`:179`），既静态不可复刻，又触碰 AGENTS.md 第 9 条「禁止用 WebView 完成登录」，故 B 不能判「可独立实现」。
 
 **三条路径分项结论（四档）**：
 
 | 路径 | 结论 | 关键原因 |
 |---|---|---|
-| A 账号密码 | **可独立实现** | RSA 1024 + MD5 签名 + di 全部在 Java 侧；响应是 XML 解析 |
-| B 短信验证码 | **可独立实现** | 多一次 `GET /sslcrypt/get_last_cert`；AES + RSA 分段全标准算法 |
-| C 扫码 | **可独立实现** | **不需要 di、不需要 sig**、不依赖既有登录态 |
+| A 账号密码 | **可独立实现** | RSA 1024 + MD5 签名 + di 全部在 Java 侧；响应是 XML 解析；前置 `cap/init` 失败不阻断 |
+| B 短信验证码 | **需攻关**（2026-11-29 由「可独立实现」降级） | 发码与提交两段都已到接口级，但**前置人机验证是 WebView + 服务端 JS**，静态不可复刻且本项目禁用 WebView 登录 |
+| C 扫码 | **可独立实现（带动态前提）** | **不发 di、不带 cookie**（但**加 sig**）；`hostDeviceId` 官方客户端恒 `null`、参数被丢弃；不依赖既有登录态。残留前提：服务端接受该参数缺席 |
 
 → **整体：原生登录可行（静态可行，动态未验证）**。
 
@@ -335,6 +340,24 @@ Sdata 头只在**自研网络栈**加：classes6/sources/com/baidu/netdisk/netwo
 
 ---
 
+#### 3.2.8 T-006 补充收口摘要（2026-11-29）
+
+本节把补充收口的四项结论并入上面的判定，**不删除任何 T-006 原文**。详细证据见 `docs/evidence/baidu-login-deep-dive.md` §15。
+
+| 项 | 结论 | 对判定的影响 |
+|---|---|---|
+| `libbaiduprotect_sec.so`（及 `*_jni_facect.so`） | 仅服务人脸 WBAES 加密；无库 `NEEDED` sec.so、无 dlopen 字面量、无 `Java_` 导出（sec.so）、唯一 Java 消费方是 `WbEncryptUtil.java:53` | **不影响**；「`libbaidusec*`」实为这两个库，APK 内无同名文件 |
+| 短信发码链路 | `LoginSendSmsHelper` → `SapiAccountService.doCapInitAndGetLoginSms` → `POST {wap}/wp/api/login/sms`（前置 `POST passport.baidu.com/cap/init`） | **B 降级为「需攻关」**：真正的人机墙是 `pass-machine.html` WebView |
+| 短信提交端点 | `NewLoginSmsLayout` → `LoginSmsWapLoginHelper` → `smsWapLogin` → `POST {wap}/wp/api/login`（`sms=1`+`smsvc`） | 修正原记录（原写 `/v2/sapi/login`，那是旧 `dynamicPwdLogin` 链） |
+| 扫码 `hostDeviceId` | 官方客户端**从不赋值**，恒 `null`；`a.java:333-353` 丢弃空值参数 | **已闭环**，原「客户端生成、需保持一致」作废；本项目不传即可 |
+| 扫码是否加 `sig` | **加**（经 `HttpClientWrap.buildParamDTO` → `doSign`）；但**不发 `di`、不带 cookie** | 修正原「不加 sig」 |
+| `cuid` 算法 | `MD5("com.baidu" + ANDROID_ID)` 转大写；黑名单/空值 → `UUID` + `FUUID` 前缀；派生字段 `i()` 为 4 算子自定义摘要 + 自定义 Base32 | 主值可复刻；`i()` **当前无法精确复刻**（需移植且无测试向量） |
+
+**三条路径修正后**：A 可独立实现 / **B 需攻关** / C 可独立实现（带「服务端接受 `hostDeviceId` 缺席」这一动态前提）。**百度整体仍判「原生登录可行」**，理由是 A、C 两条路径不含静态不可复刻环节；B 不计入。
+
+**Cookie 边界（必须与结论一起读）**：`cuid` 与 `DVIF` 是**本项目按官方算法自行构造的设备信息 Cookie**；`BAIDUID` 由服务端 `Set-Cookie` 下发（本项目只能读、读不到发空串）；`BDUSS`/`STOKEN`/`PTOKEN` 是登录要换的认证凭据。**本项目不复用浏览器或官方 App 的私有认证 Cookie。**
+
+---
 ### 3.3 夸克网盘
 
 **结论：需攻关** — 落在第 2 层，第 3 层被两项 native 闭源组件阻断。
@@ -793,15 +816,47 @@ strings <解包出的>/lib/arm64-v8a/libpassport_core.so | grep -c RegisterNativ
 readelf -dW <解包出的>/lib/arm64-v8a/libpassport_core.so | grep NEEDED
 # 预期：仅 liblog/libm/libstdc++/libdl/libc
 
-# 13) 百度：扫码路径不含 sig / di（三条路径中依赖最少的一条）
+# 13) 百度：扫码路径不发 di、不带 cookie，但**加 sig**（2026-11-29 修正）
 grep -c 'HttpHashMapWrap' reverse/baidu/sources/classes2/sources/com/baidu/sapi2/QrCodeService.java
-# 预期：0
+# 预期：0（只是没直接选签名实现类，不等于不签名）
 grep -c 'getDeviceInfo' reverse/baidu/sources/classes2/sources/com/baidu/sapi2/QrCodeService.java
-# 预期：0
+# 预期：0（不发 di）
+grep -n 'doSign' reverse/baidu/sources/classes4/sources/com/baidu/sapi2/httpwrap/HttpClientWrap.java
+# 预期：:87 —— 全仓唯一 doSign 调用点，扫码与账号密码共用该链路 → 扫码也带 sig
 
 # 14) 百度：账号密码响应是 XML 解析（无 WebView）
 sed -n '60,80p' reverse/baidu/sources/classes2/sources/com/baidu/sapi2/SapiCoreUtil.java
 # 预期：正则 <client>...</client> + XmlPullParser
+
+# ===== T-006 补充收口追加（2026-11-29）=====
+
+# 15) 百度：libbaiduprotect_sec 的全部 Java 加载点
+grep -rn 'baiduprotect' reverse/baidu/sources --include=*.java
+# 预期：WBAESCipherImplement.java:17 的 loadLibrary + kh0/____.java:21 的常量（动态插件路径）
+grep -rn 'libbaidusec' reverse/baidu/sources --include=*.java
+# 预期：0 命中（APK 内不存在该命名的库）
+
+# 16) 百度：短信发码与提交端点
+grep -n 'wp/api/login' \
+  reverse/baidu/sources/classes2/sources/com/baidu/sapi2/SapiAccountRepository.java
+# 预期：:1126-1128 getAccountAndPwdUrl(/wp/api/login)、:1632-1634 getLoginSmsUrl(/wp/api/login/sms)
+
+# 17) 百度：hostDeviceId 是否被赋值（结论：从未赋值，恒 null）
+grep -rn '\.hostDeviceId *=' reverse/baidu/sources --include=*.java
+# 预期：0 命中
+sed -n '333,353p' reverse/baidu/sources/classes15/sources/com/baidu/pass/http/a.java
+# 预期：只拼接 non-empty 的 key/value → null 参数被丢弃
+
+# 18) 百度：cuid 是否依赖 native（结论：纯 Java）
+grep -rnE 'loadLibrary|System\.load|" native "' \
+  reverse/baidu/sources/classes3/sources/com/baidu/cesium
+# 预期：0 命中
+
+# 19) 百度：短信前置人机验证是 WebView 页面
+grep -n 'pass-machine' reverse/baidu/sources/classes18/sources/com/baidu/validation/ValidationManager.java
+grep -n 'loadUrl\|machine_sdk' \
+  reverse/baidu/sources/classes18/sources/com/baidu/validation/activity/ValidationActivity.java
+# 预期：:179 machine_sdk.show()、:319-321 loadUrl(...)
 ~~~
 
 > 说明：`reverse/` 内的产物不进 Git，上述命令需先在本地完成对应 APK 的反编译（坚果云 jadx 全量、百度按 dex 分批、夸克 classes7/10、阿里 classes9/11）。
@@ -821,5 +876,13 @@ sed -n '60,80p' reverse/baidu/sources/classes2/sources/com/baidu/sapi2/SapiCoreU
 - 没有为百度发任何真实请求，没有登录百度账号，没有抓包。
 - 没有移植、复制或集成任何官方闭源 so；没有新增 Gradle / Cargo 依赖；没有改架构。
 - 没有逆向 `libfire.so` / `libsofiresec.so` 的内部算法（只判关联）。
-- 没有取证百度的「获取短信验证码」接口（T-006 范围只到「已拿到验证码之后」的登录步骤）。
+- ~~没有取证百度的「获取短信验证码」接口（T-006 范围只到「已拿到验证码之后」的登录步骤）。~~ **已于 2026-11-29 补充收口取证**（`/wp/api/login/sms`），但完整短信登录仍判「需攻关」。
 - 没有改写 T-005 的历史 No-Go 结论（`docs/evidence/mvp-go-no-go.md` 原文保留）。
+
+**T-006 补充收口追加（2026-11-29）**：
+
+- 没有登录百度账号，没有发送任何真实登录或短信请求，没有抓包。
+- 没有把 APK 硬编码密钥（`appSignKey` / `di` 的 AES key / 人脸 `pass-key`）的实际值写入文档或日志。
+- 没有复制、提交或集成任何官方闭源 native so（本轮只做 `readelf`/`nm`/`strings` 静态观察）。
+- 没有新增 Gradle / Cargo 依赖，没有修改 Android / Kotlin / Rust / UniFFI 架构。
+- 没有执行 T-005，没有锁定 MVP 网盘，没有启动阶段 2。

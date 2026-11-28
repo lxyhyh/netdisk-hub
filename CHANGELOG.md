@@ -4,6 +4,42 @@
 
 ## [未发布]
 
+### T-006 补充收口：百度登录剩余静态证据闭环（2026-11-29）
+
+**结论：`libbaiduprotect_sec.so` 已闭环为「仅服务人脸 WBAES、不阻断三条路径」；短信发码链路已取证到接口级但**完整短信登录降级为「需攻关」**；扫码 `hostDeviceId` 结论反转（官方客户端从不赋值、恒 `null`）；`cuid` 官方算法已定位但派生字段 `i()` 当前无法精确复刻。百度整体仍判「原生登录可行」，**成立路径收窄为 A 账号密码 / C 扫码两条**。T-005 历史 No-Go 未改写，MVP 未锁定，阶段 2 未启动。**
+
+#### 新增
+
+- `docs/evidence/baidu-login-deep-dive.md` **§15 T-006 补充收口**（15.0–15.9）：不删除 T-006 原文，新增 11 行 `libbaiduprotect_sec` 结论表、6 列短信发码步骤表、`hostDeviceId` 9 行表、`cuid` 13 跳逐跳表、Rust 复刻五类划分、`di` 表述校正四条、三路径修正后结论、整体四档结论、以及对 §1–§13 的更正登记表
+
+#### 修改
+
+| 文件 | 变化 |
+|---|---|
+| `docs/evidence/baidu-login-deep-dive.md` | 857 → **1258 行**，74746 → **116032 B**；§1.2 加修正指引、§1.3 加行级修正标注、§5 `libbaiduprotect_sec.so` 行改「已闭环」、§13 第 5/7/8 行标记关闭、§13.1 补发码结论、附录 B 推测条数 2 → 1 |
+| `docs/evidence/login-feasibility.md` | 825 → **890 行**，60613 → **68058 B**；§2 总表百度行改「A/C 成立、B 需攻关」、§3.2.3 C 表与「不加 sig」结论纠正、§3.2.3 B 段加旧链纠偏、§3.2.6 复核表新增第 6/7/8 行、§3.2.7 三路径结论改写、**新增 §3.2.8 补充收口摘要**、附录 A 增第 13 项修正与第 15–19 项命令、附录 B 增边界声明 |
+| `docs/API_FACTS.md` | 511 → **519 行**，39755 → **42442 B**；全局状态加百度口径细化、百度第 3 项（短信发码/提交端点）、第 9 项（分路径结论）、第 12 项（发码已取证 + 新增扫码动态前提）、待确认问题关闭两项新增两项、T-006 增补②更正为「扫码加 sig」、汇总表百度行 |
+| `docs/PROVIDERS.md` | 300 → **328 行**，26378 → **28680 B**；§3 百度行细分路径并写明 B 的阻断点，**新增 §6.8 补充收口后的准入变化**（含与坚果云的口径对比表、是否按「网盘」或「路径」计的说明） |
+| `docs/RISKS.md` | v0.6 → **v0.7**，65 → **68 行**；R29 扩充（扫码 `hostDeviceId` 动态前提 + `cuid` 派生字段风险）、**新增 R30**（短信 WebView 人机验证）、**新增 R31**（扫码 `hostDeviceId` 服务端接受度）；服务端风控类风险一律保持未关闭 |
+| `docs/TASKS.md` | 1231 → **1305 行**，67423 → **74831 B**；新增「T-006 补充收口（2026-11-29）」小节（四项补充结论 / 结论校正表 / 原 T-006 验收项复核 / 文档同步清单 / 未解决清单 / 边界），头部「最后更新」同步 |
+
+#### 关键事实（全部带 `文件:行号`，详见 deep-dive §15）
+
+- **`libbaiduprotect_sec.so` 仅服务人脸 WBAES**：APK 内只有 `libbaiduprotect_sec.so`（133168 B，sha256 `2e2f74f8…ec68`）与 `libbaiduprotect_sec_jni_facect.so`（137264 B，sha256 `b4ba82eb…3e5b`）；**APK 内不存在任何 `libbaidusec*` 文件**（T-006 所指即这两库）。65 个 `.so` 全表 `readelf -d` 扫描：唯一 `NEEDED` 指向 `jni_facect` 的是 `libbd_pass_face_sdk.so`，**没有任何库 `NEEDED` sec.so**；全库 `strings` 无 `libbaiduprotect_sec.so` 字面量 → 无 dlopen 依赖。`sec.so` 导出 91 个 `_0x` 混淆符号、**0 个 `Java_`、无 `JNI_OnLoad`、无 `RegisterNatives`**（WBAES 128 白盒实现）；`jni_facect.so` 恰 7 个 `Java_com_baidu_protect_crypto_facect_WBAESCipherImplement_*`。唯一 Java 消费方 `WbEncryptUtil.java:53` 的 `Cipher.getInstance("WBAES", null)`，调用方只有 `com/baidu/sofire/face/*`（9 处）。另有 T-006 遗漏的第二条加载入口：`kh0/____.java:21` 常量 `libbaiduprotect_sec.so` → `face/landmark/SDK.java:163-173` `System.load`，但该插件链路在本 APK 内缺 4/5 个依赖 so，走不通。→ 定级「已排除对 A/B/C 的阻断，保留静态未知（无运行动态验证）」，依据是**类引用闭包 + `NEEDED` 依赖图 + 无 dlopen 字面量**三重证据，不是「搜不到调用点」。
+- **短信发码链路已到接口级**：`NewLoginSmsLayout.java:158-169` → `LoginSendSmsHelper.java:161-169` → `SapiAccountService.doCapInitAndGetLoginSms:173-193`（`ds`/`tk` 都空时先 `ValidationUtil.capInit`，**失败也继续**）→ `POST {wap}/wp/api/login/sms`（`SapiAccountRepository.java:1632-1634`），参数 20 项已逐条落行号，走 `HttpHashMapWrap`（带 `sig`）与 `ParamsUtil.buildNaCookie`（带 `cuid` 与 `DVIF`）。错误码 `50020`/`50021`/`500002`/`50052` 拉起人机验证、`50092` 频控。
+- **短信提交端点修正**：`NewLoginSmsLayout.java:178-207` → `LoginSmsWapLoginHelper.java:97-103` → `smsWapLogin`（`SapiAccountRepository.java:2710-2723`）→ `wapLogin`（`:2873-2901`）→ **`POST {wap}/wp/api/login`**，带 `sms=1` + `smsvc=<验证码>`。T-006 记的 `/v2/sapi/login` 属旧 `dynamicPwdLogin` 链，网盘现用 UI 不走它。
+- **完整短信登录仍不成立**：真正的人机墙是 `https://wappass.baidu.com/static/activity/pass-machine.html` 的 WebView（`ValidationActivity.java:319-321` `loadUrl`、`:179` `evaluateJavascript("javascript:window.machine_sdk.show()")`），通过条件由服务端下发 + 页面 JS 风控决定，静态不可复刻；且 AGENTS.md 第 9 条禁止用 WebView 完成登录 → **B 降级为「需攻关」**，与坚果云 R27 同类。
+- **`hostDeviceId` 结论反转**：`GetQrCodeImageDTO.java:9` / `QrLoginStstusCheckDTO.java:6` 都只声明字段、无初值，**全仓 `.hostDeviceId =` 赋值 0 命中** → 恒 `null`；`com/baidu/pass/http/a.java:333-353` 只拼 `!isEmpty(key) && !isEmpty(value)` 的项 → **参数根本不出现**；`GetQrCodeImageResult` 也不含该字段。→ 本项目按官方缺省不传即可，原「推测任意稳定随机串可用」作废。
+- **扫码其实加 `sig`（更正 T-006）**：三个扫码请求都经 `HttpClientWrap.buildParamDTO` → `doSign`（`HttpClientWrap.java:86-88` 是全仓唯一调用点）；但三处 `get(...)` 的 cookie 参数都传 `null` → **加 sig、不发 `di`、不带 cookie**。
+- **`cuid` 官方算法**：`SapiUtils.getClientId:268-282` 两道闸门 → `DeviceId.getDeviceID:102-104` → `DeviceId.c():37-66`（FileLock + `files/libcuid.so` 解密）→ 新建走 `cesium/h.java:377-400`：`Settings.Secure.ANDROID_ID` → 黑名单 `0000000000000000` 时改 `UUID.randomUUID()` → `MD5("com.baidu" + id)` **大写十六进制** → 命中黑名单分支时 `"FUUID" + str.substring(5)`。机型指纹 `f()` = `MD5(Build.MODEL)[3..15]`（12 字符）。持久化在 `dataDir/.cesium/libbh.so`（**数据文件，不是 so**，APK 内无该 so）。`com/baidu/cesium` 全目录 54 个 java，`loadLibrary`/`System.load`/`" native "` **0 命中** → 纯 Java。派生字段 `i()` = `cesium.a.C_` 四算子（含 xxHash32 与反射 PRNG）+ 自定义 Base32（`ABCDEFGHIJKLMNOPQRSTUVWXYZ234567=`），**当前无法精确复刻**（需移植 `cesium.c.a.*` 且本机无 Java 运行时可产测试向量）。
+- **`di` 表述校正**：`SapiDeviceInfo.java:67-187` 共 **80 处 `add(`**，其中显式 `add("")` 12 处、其余 68 处为 `(diExceptIndex.contains(N) || !checkDiUpload(...)) ? "" : <值>` → **40 个位置始终构造，被排除时填空字符串而非删除字段**；「16 个恒空位」只表示官方客户端发空值，**不表示服务端允许删除**；服务端对 40 项的校验强度**全部待动态验证**。
+- **Cookie 三类必须分开**：`cuid` / `DVIF` 是本项目按官方算法**自行构造的设备信息 Cookie**（`ParamsUtil.java:74`、`:79`）；`BAIDUID` 由服务端 `Set-Cookie` 下发、本项目只读（读不到发空串，`SapiUtils.java:284-300`）；`BDUSS`/`STOKEN`/`PTOKEN` 是登录要换的认证凭据。**本项目不复用浏览器或官方 App 的私有认证 Cookie。**
+
+#### 安全与边界
+
+- 未登录任何真实账号、未发送任何真实登录或短信请求、未抓包；未把 APK 硬编码密钥（`appSignKey` / `di` 的 AES key / 人脸 `pass-key`）的实际值写入文档或日志；未复制或集成任何官方闭源 so（只做 `readelf`/`nm`/`strings` 静态观察）；未新增 Gradle / Cargo 依赖；未改 Android / Kotlin / Rust / UniFFI 架构；`reverse/` 及其产物未进 Git。
+- **未重跑 T-005、未锁定 MVP、未启动阶段 2**；`docs/evidence/mvp-go-no-go.md` 的历史记录未改写。
+
 ### T-006 百度网盘原生登录攻关证据与准入复核（2026-11-28）
 
 **结论：百度由「需攻关」改判「原生登录可行（静态可行，动态未验证）」；账号密码 / 短信验证码 / 扫码三条路径分别判为「可独立实现」。硬准入数量 1 → 2，但 T-005 的历史 No-Go 结论不改写、MVP 不锁定、阶段 2 不启动。**
