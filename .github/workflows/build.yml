@@ -350,11 +350,15 @@ jobs:
           # boot_completed 也拿到了，但 guest 里的 surfaceflinger 每隔 10 秒 SIGABRT
           # （Fatal signal 6 ... tid RegionSampling），system_server 跟着反复重启，
           # 于是安装 APK 时报 "Can't find service: package"。
-          # 这是默认 GPU 后端（host/auto）在无 GPU runner 上的软件渲染崩溃，
-          # 固定用 swiftshader_indirect 软件渲染，并关掉 Vulkan 走 GLES2 路径。
+          # 第 10 次跑（run 46146827135）的真实故障：换成 swiftshader_indirect 后
+          # 启动快了（50 秒 boot），但 guest 里 surfaceflinger 仍然反复 SIGABRT，
+          # 崩溃点是 mapper.ranchu.so 的断言：
+          #   Assertion failed: !rcEnc->featureInfo()->hasReadColorBufferDma
+          # 这是 gfxstream 的 GLDMA（guest 端读宿主 color buffer）在软件渲染下不支持，
+          # 所以显式关掉 GLDMA/GLDMA2，同时保持 Vulkan 关闭。
           "$EMULATOR" -avd netdiskhub-t003 \
             -no-window -no-audio -no-boot-anim -no-snapshot \
-            -gpu swiftshader_indirect -feature -Vulkan \
+            -gpu swiftshader_indirect -feature -Vulkan,-GLDMA,-GLDMA2 \
             -ports 5554,5555 -memory 4096 -cores 4 \
             -accel on -camera-back none -camera-front none \
             -no-metrics -netdelay none -netspeed full -verbose \
@@ -408,8 +412,22 @@ jobs:
             "$ADB" shell ps -A 2>/dev/null | grep -E "system_server|surfaceflinger" || true
             exit 1
           fi
-          sleep 30
-          echo "system_server pid = $("$ADB" shell pidof system_server | tr -d "\r")"
+          # 光等 30 秒不够：surfaceflinger 崩溃会让 system_server 跟着重启。
+          # 这里持续观察 60 秒，要求 surfaceflinger 与 system_server 的 pid 全程不变。
+          SF_PID="$("$ADB" shell pidof surfaceflinger | tr -d "\r")"
+          SS_PID="$("$ADB" shell pidof system_server | tr -d "\r")"
+          echo "surfaceflinger pid = $SF_PID, system_server pid = $SS_PID"
+          for i in $(seq 1 12); do
+            sleep 5
+            NOW_SF="$("$ADB" shell pidof surfaceflinger 2>/dev/null | tr -d "\r")"
+            NOW_SS="$("$ADB" shell pidof system_server 2>/dev/null | tr -d "\r")"
+            if [ "$NOW_SF" != "$SF_PID" ] || [ "$NOW_SS" != "$SS_PID" ]; then
+              echo "::error::第 $i 次稳定性检查发现进程重启：surfaceflinger $SF_PID -> $NOW_SF, system_server $SS_PID -> $NOW_SS"
+              "$ADB" logcat -b crash -d 2>/dev/null | tail -n 80 || true
+              exit 1
+            fi
+          done
+          echo "60 秒稳定性检查通过"
           echo "sdk = $("$ADB" shell getprop ro.build.version.sdk | tr -d "\r")"
           echo "abi = $("$ADB" shell getprop ro.product.cpu.abi | tr -d "\r")"
           "$ADB" shell input keyevent 82 || true
