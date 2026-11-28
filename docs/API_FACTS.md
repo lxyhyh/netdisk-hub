@@ -24,7 +24,7 @@
 原因：
 
 - 坚果云（T-002b）与百度（T-002d）是 `Java/Kotlin 主体`，协议在 dex 里，登录链路可完整读出；差别在于坚果云只有 Base64，百度有设备指纹与风控 SDK。
-- 百度（T-006）三条登录路径（账号密码/短信/扫码）**均不依赖官方闭源 native**：`tpl`/`appSignKey` 是 APK 硬编码常量，`di` 40 字段已逐项定性且加密全在 Java 侧，`passport_core` 六 native 在三条主链 0 调用，其余 6 个安全库只服务业务 API / APK 校验 / P2P / OAID。
+- 百度（T-006）**核心认证算法不依赖官方闭源 native**：`tpl`/`appSignKey` 是 APK 硬编码常量，RSA 密码加密、`sig` 签名、`di` 40 字段的 AES 加密全在 Java 侧，`passport_core` 六 native 在三条主链 0 调用，其余 6 个安全库只服务业务 API / APK 校验 / P2P / OAID。**但公共参数 `zid` 的真实值存在 native 依赖**：`sofire/jni/Asc.java:5-8` `System.loadLibrary("fire")`，`sofire/ac/F.java:248-284` 的 `re()` 直接转调 `Asc.ar`，SP 文件解密/加密走 `Asc.dc`/`Asc.ac`；无 native 时只能产出 62 位硬编码常量或空串（`docs/evidence/baidu-login-deep-dive.md` §17）。
 - 夸克、阿里虽然由 Flutter 承载**文件业务**，T-002c 定向反编译确认**账号登录体系完整存在于 dex 的 Java 层**（夸克 `UCLoginServiceImpl` + MTOP；阿里 `com/ali/user/mobile` + Havana/login4android），所以登录协议可读；两者都被阿里聚安全 native 阻断请求签名。
 - 天翼、123 的 dex 只有 3/4 个壳桩类、**0 条登录线索**，业务在 `libapp.so`（Dart AOT），天翼另有爱加密整包载荷 → 属技术栈决定的上限，不是遗漏。
 - 蓝奏、UC、迅雷按 T-001 拍板记为资料缺失，按 `docs/SCOPE.md` 第 6 节兜底，不攻关。
@@ -90,7 +90,7 @@
    - 分路径（2026-11-28 校正后）：账号密码 **可独立实现（带与坚果云 R27 同级的条件性人机验证依赖）** / 短信验证码 **需攻关** / 扫码 **可独立实现（带「服务端接受 `hostDeviceId` 缺席」这一动态前提）**（`docs/evidence/baidu-login-deep-dive.md` §16.5.7）
    - A 路径的人机验证分支：错误码 **50052** 时若 `ValidationServiceUtil.isAvailable()` 为假走整页网页登录，否则 `startValidation` 回调写回 `ds`/`tk` 并 `onAgainRequestPwdLogin` 重试原生登录（`NewLoginUtil.java:2107-2145`）；属**条件触发**，非每次必经
    - 为什么整体仍可行：存在 A、C 两条不含「静态不可复刻环节」的路径；B 不计入
-   - 依据强度：路径均不依赖官方闭源 native（含 `libbaiduprotect_sec.so`，已闭环为仅服务人脸 WBAES）；但仍需动态验证服务端是否接受本项目构造的 `sig` / `di`
+   - 依据强度：**核心认证算法**不依赖官方闭源 native（含 `libbaiduprotect_sec.so`，已闭环为仅服务人脸 WBAES）；**公共参数 `zid` 的真实值依赖 `libfire` 与服务端下发数据，本项目只能取 62 位常量或空串**；仍需动态验证服务端是否接受本项目构造的 `sig` / `di` / 兜底 `zid`
 10. 若需攻关：**T-006 后不再成立**——原 4 项攻关点已逐项处理（见下表），当前无阻断性攻关项。仅剩服务端行为类待动态验证（见第 12 项）。
 
     | 原攻关点（T-002c） | T-006 复核结果 | 状态 |
@@ -504,7 +504,7 @@
 > 「登录流程 12 字段」指 `docs/evidence/login-feasibility.md` 第 2 节总表与本节各条目是否写全 12 项，与「可行性结论」是两件事。
 > **夸克与阿里的登录实现不在 Dart 侧**——这一点修正了 T-002d 把四家统一记为「协议需动态分析」的写法。文件业务协议仍在 Dart/jsbridge 侧，T-002d 的结论对文件协议仍成立。
 > 4 个 Flutter 网盘中，天翼/123 的「未知」是技术栈决定的结果，不是本任务遗漏；夸克/阿里的「需攻关」是**已有证据证明依赖闭源 native**，不是资料不足。
-> 百度在 T-006 后由「需攻关」改为「原生登录可行」：三条登录路径均无闭源 native 依赖，剩余仅为服务端行为待动态验证。**这不改写 T-005 的历史 No-Go 结论。**
+> 百度在 T-006 后由「需攻关」改为「原生登录可行」：**核心认证算法无闭源 native 依赖**，剩余为服务端行为待动态验证；但**公共参数 `zid` 的真实值依赖 `libfire` 与服务端下发数据，本项目只能取 62 位常量或空串**，兜底值是否被接受同属待动态验证（§17）。**这不改写 T-005 的历史 No-Go 结论。**
 > **2026-11-28 补充收口**：百度整体档位不变，但**分路径口径修正**——A 账号密码「可独立实现」、C 扫码「可独立实现（带动态前提）」、**B 短信验证码降级为「需攻关」**（发码前置人机验证是 `pass-machine.html` WebView 页面）。另外 `libbaiduprotect_sec.so` 已闭环为「仅服务人脸 WBAES」、扫码 `hostDeviceId` 已闭环为「官方客户端恒传 `null`」。详见 `docs/evidence/baidu-login-deep-dive.md` §15。
 
 ## 汇总：资料缺失说明

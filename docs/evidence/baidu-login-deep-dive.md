@@ -18,7 +18,7 @@
 
 ### 1.2 结论摘要（一句话版）
 
-**百度的账号密码、短信验证码、扫码三条登录路径，在静态证据上都可以由本项目独立实现，均不依赖官方闭源 native 库；唯一未闭环的是服务端风控是否放行，属动态验证范畴。整体四档结论：原生登录可行（静态可行，动态未验证）。**
+**百度的账号密码、短信验证码、扫码三条登录路径，在静态证据上都可以由本项目独立实现；核心认证算法（RSA 密码加密、`sig` 签名、`di` 的 AES 加密）均不依赖官方闭源 native 库，但公共请求参数 `zid` 的真实值依赖 `libfire` 与服务端下发数据（§17）。整体四档结论：原生登录可行（静态可行，动态未验证）。**
 
 > **2026-11-28 补充收口后的一处修正**：上述「三条均可独立实现」已被 §15.7 修正为 **A 账号密码可独立实现 / B 短信需攻关（前置人机验证是 WebView + 服务端 JS）/ C 扫码可独立实现（带「服务端接受 `hostDeviceId` 缺席」这一动态前提）**；native 结论不变。**整体四档仍为「原生登录可行」**，因为 A、C 两条路径不含静态不可复刻环节。本节原文保留不改，差异登记见 §15.9。
 >
@@ -723,7 +723,7 @@ T-002c 只记「其他 native 安全组件待确认」；本次把 6 个库的**
 | # | 要求 | 回答 |
 |---|---|---|
 | 1 | 哪条路径能够独立实现 | **三条都能**（A / B / C） |
-| 2 | 哪些路径依赖 native | **没有**（三条均不依赖任何官方闭源 native） |
+| 2 | 哪些路径依赖 native | **核心认证算法：没有**（RSA / `sig` / `di` 加密全在 Java 侧）。**公共参数 `zid`：有**——真实值依赖 `libfire`（`Asc.ar/dc/ac`）与服务端下发数据，无 native 时只能取 62 位常量或空串（§17） |
 | 3 | 是否存在至少一种符合项目要求的原生登录方式 | **存在**：本项目 Rust Adapter 直接走官方 Android 客户端协议、自行收集输入、自行换 token，符合 AGENTS.md 第 9 条「登录必须 APP 内原生」 |
 | 4 | 是否仍依赖未解决的设备指纹/风控/运行时注入 | **设备指纹已解**（§3，40 字段全部定性，加密算法全在 Java 侧）；**运行时注入不存在**（§2.5，`tpl`/`appSignKey` 是常量）；**服务端风控仍未知**（不可静态证明） |
 | 5 | 是否需要 ADR | **不需要**（§10.4） |
@@ -1225,7 +1225,7 @@ T-006 主体取证完成后复核发现四处证据没有闭环，且有三条�
 
 | 原位置 | 原文摘要 | 本节实测 | 处理 |
 |---|---|---|---|
-| §1.2 一句话版 | 「三条登录路径……均不依赖官方闭源 native；唯一未闭环的是服务端风控」 | native 结论正确；但 B 还有 WebView 人机验证未闭环 | **已被本节修正**，以 §15.7 为准 |
+| §1.2 一句话版 | 「三条登录路径……均不依赖官方闭源 native；唯一未闭环的是服务端风控」 | 「均不依赖 native」过于笼统：核心认证算法成立，公共参数 `zid` 的真实值依赖 native（§17）；另外 B 还有 WebView 人机验证未闭环 | **已被本节与 §17 修正**，以 §15.7 + §17.10 为准 |
 | §1.3 表第 6 行 | 「短信路径：可独立实现（静态）」 | 降级为**需攻关** | 同上 |
 | §1.3 表第 7 行 | 「扫码路径：可独立实现（静态）」 | 保留，但补「`hostDeviceId` 官方不生成」与「服务端是否接受缺席待验证」 | 同上 |
 | §5 表 `libbaiduprotect_sec.so` 行 | 「待确认：本次未追其 Java 侧调用链」 | 已闭环，见 §15.1 | 同上 |
@@ -1536,6 +1536,130 @@ T-006 主体取证完成后复核发现四处证据没有闭环，且有三条�
 | §7 / §15.7.2 | B 降级理由为「本项目按 AGENTS.md 第 9 条禁止用 WebView 完成登录」 | WebView 只做条件触发的人机挑战、票据回原生、认证仍原生 → **不构成禁止形态** | **理由已改写**，档位暂不自行提升（待拍板） |
 | §6（A 路径） | 只记前置 `cap/init` 失败仍继续，未提其它验证分支 | A 在错误码 50052 下同样走 `ValidationService` 人机挑战并重试 | **新增 §16.5.4** |
 | 全文日期 | 多处「2026-11-28」 | 本轮补充收口实际发生在 **2026-11-28** | **全部改为 2026-11-28** |
+
+## 17 zid 的 native 依赖与二次查询闭环（2026-11-28，当前有效入口）
+
+> 本节是 **zid / sf_zid 相关问题的当前有效结论入口**。§1.2、§12.2、§16.3 关于「三条路径均不依赖闭源 native」「zid 可精确复刻」的表述**已被本节取代**（差异见 17.9）。其余章节保留为历史证据，不删。
+>
+> 本轮**只做静态读码复核**：不发请求、不登录、不抓包、不改生产代码、不移植任何闭源 so。
+
+### 17.0 为什么需要本机复核
+
+§16.3 曾把 `sf_zid` 的七分支与五种取值穷举完，但**没有回答「这些取值在没有官方 native 的情况下能不能拿到」**。§16.3.6 的「Rust 复刻结论」把 `zid` 写成「不能精确复刻，但可用纯 Java 兜底」，却没有证明兜底分支本身不经过 native。本轮把这条缺口补上，并顺带闭环「`di` 二次查询是否会改变最终值」。
+
+### 17.1 zid 的七条数据来源与 native 依赖
+
+| 数据来源 | 是否需要 native | 具体依赖点 | 不存在 native 时的结果 |
+|---|---|---|---|
+| 静态缓存 `com.baidu.sofire.d.b.a` | **读取不需要，但写入来源依赖** | 静态字段只被 `d()`/`e()`/`c()` 的返回值或 62 位常量赋值（`sofire/d/b.java:401`、`:433`、`:436`、`:465`）；监听同步点 `sofire/d/a.java:57` 的 `onSharedPreferenceChanged` → `b.a = this.b.e()`，取值仍来自 `e()` | 进程内初值为空串（`b.java:7`），无 native 时永远停在初值或常量，拿不到真实值 |
+| SP 文件数据 `xytk` / `xytk_m` | **读取不需要，但写入由 sofire 引擎/服务端决定** | `sofire/k/a.java:74-76` 读 `xytk`、`:66-68` 读 `xytk_m`，都是纯 SharedPreferences 读；但 `xytk` 的唯一 Java 写入点是 `androidx/core/hardware/refios/FocusHighlightNp.java:176`（`isEdgeTouched` → `putString("xytk")`），唯一调用方 `sofire/x0/EngineImpl.java:346`，键来自 `:311 sofirePreferences.delete()` 返回的 SP `xytk2`；`k/c.java:31-40` 在服务进程可用时把 SP 读写转成 ContentProvider `sofire` 的 `CallPreferences` 调用 | 恒为空串（纯 Java 侧没有自造点，`grep` 全仓 `putString("xytk"` 只有上述包装类） |
+| **SP 文件解密 `xyusec`** | **是，100% 依赖** | `sofire/l/b.java:257-266` `c(String)` = `new String(l.e.a(l.d.a, Base64.decode(str,10), true), "UTF-8")`；`l/e.java` 的 `a(...)` 转调 `com.baidu.sofire.jni.Asc.dc/dcn`；`Asc` 静态块 `System.loadLibrary("fire")` | 返回空串（异常被吞），分支继续往下 |
+| **SP 文件加密 `xyus`** | **是，100% 依赖** | `sofire/l/d.java:12-62` 用 `l.e.b(a, str.getBytes("UTF-8"), true)` → `Asc.ac/acn` | 加密失败返回 `byte[0]`，`Base64.encode` 得空串 → 写不进 `xyusec`，下次仍走 UUID 分支 |
+| 服务端下发数据 | **是** | 服务端下发的 zid 只能经 sofire 服务进程写入 SP（`k/c.java` 的 ContentProvider 路径）或经 native 解密后写入 `xytk_m`；`xytk` 由 `EngineImpl` 写入，其值来自服务端 | 拿不到，恒空 |
+| 62 位硬编码常量 | **否** | `sofire/d/b.java:401`、`:433`、`:436`、`:465` 直接返回字面量 `74FFB5E615AA72E0B057EE43E3D5A23A8BA34AAC1672FC9B56A7106C57BA03` | **可取，但这是兜底值，不是真实 zid** |
+| 空串 | **否** | 七分支中的 ③（`!l.b.a(ctx,false)`）、⑤（`Pair` 空或 `first != 0`）、⑦（`catch Throwable`）直接返回 `""` | 可取；到上层由 `SapiSafeFacade.java:23-27` / `SafeService.java:27-30` 合成为 `"NoZidYet"` |
+| `"NoZidYet"` | **否** | 不是 sofire 的返回值，是上层对空串的兜底文案 | 可取 |
+
+**结论一**：七条来源里，**SP 文件解密与加密两条硬依赖 native**，服务端下发数据一条**只能经 native 或服务进程**进入本地，静态缓存一条**写入来源仍依赖上述路径**。纯 Java 侧真正能独立产出的只有 **62 位常量** 与 **空串** 两种。
+
+### 17.2 `F.getInstance().re` 是否直接依赖 native
+
+**是，直接且唯一。** 证据链（全部为静态读码）：
+
+1. `reverse/baidu/sources/classes12/sources/com/baidu/sofire/ac/F.java:248-284` `public byte[] re(byte[] bArr, byte[] bArr2)`：取静态字段 `com.baidu.sofire.l.e.a`（类型是 `com.baidu.sofire.jni.Asc`）→ `asc.ar(bArr, bArr2)`；结果为空或抛异常一律 `return new byte[0]`。方法体内**没有任何 Java 解密实现**，也没有第二分支。
+2. `reverse/baidu/sources/classes12/sources/com/baidu/sofire/l/e.java`：`public static com.baidu.sofire.jni.Asc a = new com.baidu.sofire.jni.Asc();`；`a(byte[],byte[],boolean)` 走 `asc.dc`/`asc.dcn`，`b(byte[],byte[],boolean)` 走 `asc.ac`/`asc.acn`，失败都返回 `new byte[0]`。
+3. `reverse/baidu/sources/classes12/sources/com/baidu/sofire/jni/Asc.java:5-8`：`static { try { System.loadLibrary("fire"); } catch (Throwable) {...} }`，10 个 native 方法 `fai` / `ac` / `acn` / `ar` / `dc` / `dcn` / `df` / `dr` / `it` / `itb`。
+
+**所以 `re()` = 加壳的 native 调用**：`System.loadLibrary("fire")` 失败时静态块吞掉 `Throwable`，之后任何 `ar()` 调用都会抛 `UnsatisfiedLinkError`，被 `re()` 的 catch 转成 `byte[0]`。这不是「纯 Java 兜底」，而是「native 不可用 → 空结果」。
+
+### 17.3 SP 文件解密必然经 native 的直接证据
+
+调用点只有两处，且都直接落到 native：
+
+| 位置 | 代码 | 落到哪 |
+|---|---|---|
+| `sofire/l/b.java:257-266` `c(String)` | `new String(com.baidu.sofire.l.e.a(com.baidu.sofire.l.d.a, Base64.decode(str, 10), true), "UTF-8")` | `Asc.dc`（native） |
+| `sofire/l/d.java:12-62` `a(ctx)` | 读 `xyusec` → `l.b.c(...)`；否则读 `xyus` → `l.e.b(a, str.getBytes("UTF-8"), true)` 加密回写 | `Asc.dc` 与 `Asc.ac`（native） |
+
+`sofire/d/b.java:408-441` `d(context)` 的三段式也说明同一件事：读 `xytk`（空）→ 读 `xytk_m`（空）→ `l.d.a(ctx)` 取 `A|B` 两段 → `F.getInstance().re(seg[1].getBytes(), seg[0].getBytes())` 解密，**成功分支才写 `xytk_m` 并返回**；任一环节失败即落到常量。
+
+### 17.4 关键因果链：passport_core → sofire 引擎 → 纯 Java 兜底
+
+这是本轮最重要的发现，它把「passport_core 在三条主链 0 调用」与「zid 依赖 native」连成一条链，也解释了为什么「passport_core 不阻断登录」与「zid 拿不到真实值」可以同时成立：
+
+```
+本项目不使用官方 native
+  → System.loadLibrary("passport_core") 失败（PassCoreVHelper.java 静态块）
+  → SapiConfiguration.java:550-575 的 getSofireAppKey()/getSofireSecKey() 抛异常被吞
+  → sofireAppKey / sofireSecKey 为 null
+  → FH.init 拿不到 key，sofire 引擎起不来
+  → sofire/l/k.java:6-38 判定「不可用」（SP 键 s_a_pl + files/.tmp_sofire_st/.ffnpp 标记）
+  → sofire/d/b.java:645-679 七分支的第 ① 支（!l.k.a(context)）直接走 e(context)
+  → e(context) 三段式全部拿不到值 → 返回 62 位常量
+  → 上层 getCurrentZid 非空，di 索引 34 与公共参数 zid 都是这个常量
+```
+
+**含义**：不使用官方 native 时，百度登录**不会卡在「引擎起不来」而报错**，而是**静默降级到常量**。这既降低了实现难度，也意味着发出去的 `zid` 一定不等于官方真实值。
+
+### 17.5 四问回答
+
+| # | 问题 | 回答 |
+|---|---|---|
+| 1 | 项目完全不使用官方 native 时，能否稳定生成「官方客户端实际存在」的一种合法 zid 值 | **不能**。能稳定产出的只是官方**兜底分支**的值（62 位常量），或空串（上层转 `NoZidYet`）。二者都是官方代码路径的产物，但都不是官方**正常运行时**实际发出的 zid |
+| 2 | 该值是否只能是 62 位常量或空值 | **是**。没有第三种。UUID 分支产出的是 `"<uuid>|0"` 这类**未加密的本地种子**，它随后必须经 `l.e.b(...)` 加密才能写进 `xyusec`，无 native 时加密返回 `byte[0]`，写不进去，所以它不会成为 zid |
+| 3 | 是否有其他静态可得的合法值 | **没有**。已穷举 `xytk`、`xytk_m`、`xyus`、`xyusec`、静态缓存、ContentProvider 六条通道，全部要么依赖 native，要么依赖服务进程。全仓 `loadLibrary("sofire")` / `loadLibrary("sofiresec")` **0 命中**，说明 Java 侧没有第二条自造 zid 的路径 |
+| 4 | 服务端是否接受这些值 | **待动态验证**（R29）。本轮不发请求，不做任何推测。**不接受「兜底值等价于真实值」的说法** |
+
+### 17.6 di 二次查询的阶段表
+
+`SapiDeviceInfo.java:242-249` 的第二次 `getZidAndCheckSafe(ctx, uid, 120)` 只发生在 `sf_zid` 为 `"NoZidYet"` 时。完整时序（全部静态可读）：
+
+| 阶段 | 公共参数 `zid` | `di` 索引 34（`sf_zid`） | 是否已加密 | 是否已签名 |
+|---|---|---|---|---|
+| ① `HttpHashMapWrap()` 构造 | `httpwrap/Utils.java:17` 调 `getCurrentZid(ctx)`（**事件 id 1**）写入 map | 尚未生成 | 否 | 否 |
+| ② 业务方法 put 各字段（A `SapiAccountRepository.java:484-535` / B `:2710-2723`） | 不变 | 尚未生成（**A/B 都不 `put("di")`**） | 否 | 否 |
+| ③ `wapLogin` 求值 `ParamsUtil.buildNaCookie` | 不变 | `ParamsUtil.java:75` → `SapiContext.java:375-378` → `getDiCookieInfo(loginCookieDiKeys)` → `SapiDeviceInfo.java:67` `buildDeviceTokens` 在 `:161` 调 `getCurrentZid`（**事件 id 1**） | 在 `:229-254` 末尾 `z ? encryptDeviceInfo(...)` 处加密 | 否 |
+| ④ 若 `sf_zid == "NoZidYet"` 重查 | 不变（**不回写 map**） | `:242-249` 用**事件 id 120** 再取一次并 `jSONObject.put("sf_zid", ...)` 覆盖 | 覆盖发生在**加密前**（同一函数内紧接着就 `encryptDeviceInfo`） | 否 |
+| ⑤ `buildNaCookie` 写 cookie `DVIF` | 不变 | 已定稿进 `DVIF` | 已加密 | 否 |
+| ⑥ `HttpClientWrap.buildParamDTO` → `doSign` | **参与签名**（`SapiUtils.java:135-160` 遍历整张 map） | 不参与（在 cookie 里，不在 map 里） | — | **此时签名** |
+
+### 17.7 五项重点判断
+
+| # | 判断 | 结论 | 依据 |
+|---|---|---|---|
+| 1 | 两次 `zid` 获取是否可能得到不同值 | **可能不同**。事件 id 不同（1 与 120），服务端可能按事件返回不同内容；两次之间也可能已有静态缓存 `b.a` 被写入 | `SapiSafeFacade.java:23-27`、`SafeService.java:27-30`、`SapiDeviceInfo.java:242-249` |
+| 2 | 公共参数与 `di` 最终是否可能不同 | **A/B 上不会互相覆盖**（第二次只写 `jSONObject` 的 `sf_zid`，不回写 map）；但两者**取值可能不同**，因为第一次是事件 1、第二次是事件 120。C 扫码不生成 `di` | 同上 + `QrCodeService.java:306-334` 传 `cookie = (List) null` |
+| 3 | `di` 二次查询是否发生在 AES 加密前 | **是**。`:242-249` 在 `:229-254` 的同一个函数体内，`encryptDeviceInfo` 在函数末尾 | `SapiDeviceInfo.java:229-254` |
+| 4 | `zid` 是否参与公共参数签名 | **参与**。`SapiUtils.calculateSig` 对整张 map 排序拼接；`DVIF` 在 cookie 里，**不参与** | `SapiUtils.java:135-160`、`HttpClientWrap.java:84-105` |
+| 5 | A/B/C 三条路径是否有差异 | **A 与 B 无差异**（都不 `put("di")`，都走 `buildNaCookie` → `DVIF`）；**C 不同**（`getQrCodeImage`/`getQrLoginResult` 传 `cookie = null`，**完全不触发 DVIF、不触发二次查询**），但公共参数 `zid` 仍取一次并参与签名 | `SapiAccountRepository.java:484-535`、`:2710-2723`、`QrCodeService.java:306-390` |
+
+补充：全仓 `put("di")` 只有 8 处——`AbstractService.java:18`、`OpenBdussService.java:67`、`SapiAccountRepository.java:269`（`realDynamicPwdLogin` 旧链）、`:541`（`buildSapiParams`）、`:3272`、`:3385`、`PassLivenessRecogActivity.java:1850`、`:2089`，**均不在 A/B/C 三条主链上**。另 `SapiCache.java:29-35` 的 `reportDi()` 会在 `/v8/sdkconfig/init` 成功或失败时各触发一次 `di` 生成（含二次查询），**早于任何登录请求**；这是埋点上报，不影响登录请求本身。
+
+### 17.8 A/B/C 三条路径的实际参数差异
+
+| 项 | A 账号密码 | B 短信验证码 | C 扫码 |
+|---|---|---|---|
+| 公共参数 `zid` | 有（事件 1） | 有（事件 1） | 有（事件 1） |
+| 请求体 `di` | **无** | **无** | **无** |
+| cookie `DVIF` | 有（含 `di` 二次查询） | 有（含 `di` 二次查询） | **无**（`cookie = null`） |
+| 是否参与签名 | 是（含 `zid`） | 是（含 `zid`） | 是（含 `zid`，扫码也 `doSign`） |
+| 是否触发人机挑战 | 条件触发（50052） | 发码 + 提交两段均条件触发 | 否 |
+
+→ **对 zid 而言，A 与 B 同构，C 少一条 `DVIF` 通道但公共参数照发**。所以「zid 只能取兜底值」这一限制对三条路径**同等成立**，不因路径不同而缓解。
+
+### 17.9 更正登记（对 §1.2 / §12.2 / §16.3 的修正）
+
+| 原位置 | 原文摘要 | 本节实测 | 处理 |
+|---|---|---|---|
+| §1.2 一句话版（:21） | 「三条登录路径……均不依赖官方闭源 native 库」 | **不成立**。核心认证算法（RSA/`sig`/`di` 加密）确不依赖 native；但公共参数 `zid` 的真实值依赖 `libfire` 与服务端下发数据 | **已改写** |
+| §12.2 表第 2 行（:726） | 「哪些路径依赖 native：没有」 | 同上 | **已改写** |
+| §15.9 表首行（:1228） | 「native 结论正确」 | 同上，「结论正确」过于笼统 | **已改写** |
+| §16.3.6 Rust 复刻结论 | 「`zid` 不能精确复刻，可用纯 Java 兜底」 | 兜底分支本身不经 native 成立，但**兜底值只有常量/空串两种**，且服务端是否接受未知 | **已由本节取代** |
+| §16.3.4 输出表「SP 文件解密值」 | 与「静态缓存」并列列为可选值 | SP 解密**必然经 native**，无 native 时该行恒为空 | **已由本节 17.1 取代** |
+
+### 17.10 当前有效结论（一句话）
+
+**百度核心认证算法（RSA 密码加密、`sig` 签名、`di` 的 AES 加密）不依赖闭源 native，可由本项目静态复刻；但公共参数 `zid`（以及 `di` 索引 34 的 `sf_zid`）的真实值依赖 `libfire`（`System.loadLibrary("fire")` → `Asc.ar/dc/ac`）与服务端下发数据。本项目可复刻的只是官方已确认的纯 Java 回退分支，该分支在没有 native 时只能产出 62 位硬编码常量或空串（上层转 `NoZidYet`），不存在第三种静态可得值。服务端是否接受兜底值——待动态验证（R29），本轮不作推测。**
 
 ## 附录 A：与既有文档的关系（勘误登记）
 
