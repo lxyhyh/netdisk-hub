@@ -4,8 +4,55 @@
 
 ## [未发布]
 
-### T-006 补充收口：百度登录剩余静态证据闭环（2026-11-29）
+### T-006 最终证据一致性校正（2026-11-28）
 
+**结论：四处口径不自洽已全部闭环——`t_cuid`/`t_appname` 实际是 di 索引 38/39（旧文写反，已更正）；`cuid` 的派生字段 `i()` 确实进入最终登录请求；`sf_zid` 与公共参数 `zid` 的七分支与五种取值已穷举（十六进制兜底常量实为 **62 位**，旧文「56 位」错误）；百度验证码 WebView 与坚果云 R27 **判定口径已统一**（仅承载条件触发的人机挑战、回传只有 `ds`/`tk`），并首次查明 **A 账号密码路径同样存在 50052 人机验证分支**。三路径档位不变：A 可独立实现 / B 需攻关 / C 可独立实现（带动态前提）。T-005 历史 No-Go 未改写，MVP 未锁定，阶段 2 未启动。**
+
+#### 新增
+
+- `docs/evidence/baidu-login-deep-dive.md` **§16 T-006 最终一致性校正**（16.0–16.6，295 行）：16.1「当前有效结论总入口」10 行表、16.2 `t_cuid` 与 `i()`（三种输出表）、16.3 `sf_zid` 与 `zid`（七分支表 + 「环境/分支」输出表）、16.4 人脸 native 五问表、16.5 WebView 统一口径（规则表 / 八步回传链 / 回传边界 / A 路径 50052 / 与 R27 对照 / 网页登录兜底例外 / A-B-C 校正）、16.6 更正登记 10 行表
+- `docs/evidence/login-feasibility.md` **§3.2.9 最终一致性校正**（当前有效入口，7 小节：`t_cuid`/`i()`/`sf_zid`/人脸 native/WebView 口径/A 路径 50052/与 §3.2.7、§3.2.8 差异表）
+- `docs/PROVIDERS.md` **§6.9 最终一致性校正之后的准入变化**（8 行对照表 + 「与 R27 对齐的禁止形态口径表」 + B 档位是否上调待用户拍板）
+- `docs/RISKS.md` **R32**（整页网页登录兜底分支，列出 A/B 两套错误码清单）
+- `docs/TASKS.md` **「T-006 最终一致性校正（2026-11-28）」** 小节（任务性质 / 四项闭环结论表 / 另两项校正表 / 结论变化表 / 文档同步清单表 / 8 条未解决 / 边界）
+
+#### 修改
+
+| 文件 | 变化 |
+|---|---|
+| `docs/evidence/baidu-login-deep-dive.md` | 1257 → **1561 行**，116032 → **148940 B**；§15.4.4 索引 38/39 字段来源整段改写；§15.4.6 行③ `__` 由「恒 `"O"`」改「新建与读回均为 `"V"`」、行⑤补 `i()` 进请求、边界句改「取常量的是 `t_appname`」；§3.3 表行 34 与 §4.5「56 位」→「62 位」并补分支；§15.1.6 末行改「不影响认证与签名，但少发三个可选人脸参数」；§15.7.2 补降级理由校正块；§1.2 补再校正指引；全文日期统一为 2026-11-28（原 2026-11-29 零残留） |
+| `docs/evidence/login-feasibility.md` | 888 → **940 行**，68057 → **74165 B**；§3.2.7 第 3 层删「触碰 AGENTS.md 第 9 条」改「静态不可复刻」；§2 总表百度行、§6 风险表新增「A 路径同样带条件性人机验证依赖」行、§7 注意二、§8 第 11/12 项改已关闭；头部状态 v1.1 → **v1.3** |
+| `docs/API_FACTS.md` | 518 → **521 行**，42442 → **43753 B**；全局口径细化段、百度第 9 项分路径、第 12 项新增 `i()`/`t_cuid`/`zid` 三项待确认、待确认问题新增字段口径校正行、侦察进度表百度行 |
+| `docs/PROVIDERS.md` | 327 → **351 行**，28680 → **31431 B**；§3 百度行两处、§6.7 口径段、§6.8 日期，新增 §6.9 |
+| `docs/RISKS.md` | v0.7 → **v0.8**，67 → **68 行**，14084 → **16173 B**；R29 补 `i()` 已进请求与 `sf_zid` 五种取值和 62 位；**R30 整条重写**（与 R27 同口径 + A 路径也有该分支）；新增 R32 |
+| `docs/TASKS.md` | 1304 → **1367 行**，74831 → **81645 B**；头部「最后更新」+ 本轮小节 |
+
+#### 关键事实（全部带 `文件:行号`，详见 deep-dive §16）
+
+- **`t_cuid` / `t_appname` 正确映射**：`SapiDeviceInfo.java:53`/`:54` 定义 `getCookiesKeyList()` 的索引 **38 = `t_cuid`、39 = `t_appname`**；`:171` 索引 38 取 `confignation.mTPLCuid`，`:181` 索引 39 取 `confignation.mTPLAppName`。业务侧唯一调用点 `classes15/sources/com/baidu/netdisk/application/C_.java:199` 传 `setPrivacyParamesConfig("wangpan_drive", _____(), false)`——第一个实参进 `mTPLAppName`，第二个进 `mTPLCuid`。
+- **`i()` 必然进入最终请求**：`C_.java:143` `String cuid = ew._.j` → `:145` 空则 `CommonParam.getCUID(u)`（`CommonParam.java:10-11` 直接转调 `DeviceId.getCUID`）→ `DeviceId.java:98-100` = `b(context).v()` → `cesium/h.java:168-186` `v()` 在 `__ == "V"` 时拼上 `___ = i(f797_)`，得组合串 `"<cuid>|V<i(cuid)>"` → `ew._.j` 由 `startup/task/l.java:50` 赋值（优化路径 `:62-66` 从 SP 复用的也是同一个 `DeviceId.getCUID`）→ `di` 索引 38 → AES/CBC 加密 → 登录请求体。**不复刻 `i()` 必然字节级不一致。**
+- **`cesium/h.java` 伴生字符实为 `"V"`**：`:398` 新建时 `aVar.__ = InterfaceC0042a.___`（`:53` 值为 `"V"`），`:214` JSON 读回默认值同样是 `InterfaceC0042a.___`；`InterfaceC0042a.__ = "O"`（`:52`）只在常量声明处出现、两条构造路径均未使用。旧文「恒 `"O"`」错误。
+- **`sf_zid` / `zid` 同源**：`SapiAccountManager.java:300-301` → `SapiSafeFacade.java:25-27`（空则 `"NoZidYet"`）→ `SafeService.java:28-29`（`FH.gzfi` 空则 `"NoZidYet"`）→ `sofire/d/b.java:645-679` 七分支；`httpwrap/Utils.java:17` 公共参数 `zid` 与 `SapiDeviceInfo.java:161` 索引 34 **同一次调用** `isAccountManager.getCurrentZid(context)`，取值一致；`di` 侧仅在被 `diExceptIndex` 排除 34 时变空串。
+- **`NoZidYet` 不是所有场景的实际发送值**：`sofire/d/b.java:408-441` `d()` 依次尝试 SP 缓存、文件解密值，全失败才用 `74FFB5E615AA72E0B057EE43E3D5A23A8BA34AAC1672FC9B56A7106C57BA03`（**62 个十六进制字符**，`len()` 实测）；`:443-466` `e()` 同构但不写静态缓存；纯 Java 可用时**根本不进 native 分支**，故不能因存在纯 Java 兜底就断言 `"NoZidYet"` 为实际值，也不能断言等价复刻。
+- **人脸 native 只影响三个可选参数**：`SapiAccountManager.java:149` `Class.forName("com.baidu.pass.face.platform.FaceSDKManager")` 失败被 `:153` 的 catch 置 `sapiConfiguration2.supportFaceLogin = false`；该值在 `SapiAccountRepository.java:2885-2887`（`wapLogin`，A 与 B 共用）等五处控制 `liveAbility`/`scanface`/`supFaceLogin` 与 `support_photo` 是否出现。**核心认证（RSA 加密密码、`sig`、`di`、cookie）不依赖该 native**，扫码路径（`QrCodeService`）不引用 `supportFaceLogin`。
+- **验证码 WebView 不碰凭据**：`ValidationActivity.java:321` 只 `loadUrl("https://wappass.baidu.com/static/activity/pass-machine.html" + 参数)`，参数只有 `ak`/`type`/`scene`/`tk`/`as`/`ds`；`:179` `evaluateJavascript("javascript:window.machine_sdk.show()")`；JS→原生走 **`onJsPrompt`**（`:28-55`）而非 `addJavascriptInterface`（`com/baidu/validation` 下 grep 0 命中）；回传 `ValidationResult` 字段仅 `errno`/`msg`/`data{ds,tk}`（`ValidationResult.java:4-21`）；`com/baidu/validation` 下 `grep -rn "CookieManager|setCookie|getCookie|bduss|BDUSS|stoken|ptoken"` **0 命中**。→ 与坚果云 R27 同口径，**不得仅因存在 WebView 判百度短信不可行**。
+- **A 密码路径也有 50052 挑战分支**：`NewLoginUtil.java:2107-2145` 在 `resultCode == 50052` 时，`ValidationServiceUtil.isAvailable()` 为真则 `startValidation` 并把 `ds`/`tk` 写回参数、`validation_times++` 后 `onAgainRequestPwdLogin` 重试；为假则退化为整页网页登录。除 50052 外另有一批错误码（`400101`/`400023`/`400031`/`400408`/`400035`/`400041`/`500072`/`340002`/`500001`/`500002`/`500020`/`500021`/`400605`/`402008`/`402013`）走整页网页登录，**本项目必须判「不支持并明确失败」**（R32）。
+- **方法名不可混用**：`DeviceId.getCUID` = 组合串（含 `i()`）；`DeviceId.getDeviceID` = 纯 `cuid`（`DeviceId.java:102-104` = `.c()`）；`SapiUtils.getClientId` = 带缓存与两道闸门的纯 `cuid`（`SapiUtils.java:268-282`，闸门不过返回 `null`）。三者不同，不得写成同一方法。
+
+#### 未解决（保持开放）
+
+1. 服务端是否接受本项目构造的 `sig` / `di`。
+2. `diExceptIndex` 线上实际下发值。
+3. `BAIDUID` 是否必须非空。
+4. 服务端是否校验 `cuid` 派生字段 `i()`。
+5. 服务端是否接受 `zid` 兜底值（62 位常量 / 空串 / `"NoZidYet"`）。
+6. 人机验证（A 的 50052、B 的发码与提交）是否在新设备上必然触发——属动态问题，本轮不猜。
+7. 服务端是否接受扫码 `hostDeviceId` 缺席。
+8. 百度 B 短信档位是否因口径统一由「需攻关」上调——**需用户拍板**，本报告不自行上调。
+
+---
+
+### T-006 补充收口：百度登录剩余静态证据闭环（2026-11-28）
 **结论：`libbaiduprotect_sec.so` 已闭环为「仅服务人脸 WBAES、不阻断三条路径」；短信发码链路已取证到接口级但**完整短信登录降级为「需攻关」**；扫码 `hostDeviceId` 结论反转（官方客户端从不赋值、恒 `null`）；`cuid` 官方算法已定位但派生字段 `i()` 当前无法精确复刻。百度整体仍判「原生登录可行」，**成立路径收窄为 A 账号密码 / C 扫码两条**。T-005 历史 No-Go 未改写，MVP 未锁定，阶段 2 未启动。**
 
 #### 新增
@@ -21,7 +68,7 @@
 | `docs/API_FACTS.md` | 511 → **519 行**，39755 → **42442 B**；全局状态加百度口径细化、百度第 3 项（短信发码/提交端点）、第 9 项（分路径结论）、第 12 项（发码已取证 + 新增扫码动态前提）、待确认问题关闭两项新增两项、T-006 增补②更正为「扫码加 sig」、汇总表百度行 |
 | `docs/PROVIDERS.md` | 300 → **328 行**，26378 → **28680 B**；§3 百度行细分路径并写明 B 的阻断点，**新增 §6.8 补充收口后的准入变化**（含与坚果云的口径对比表、是否按「网盘」或「路径」计的说明） |
 | `docs/RISKS.md` | v0.6 → **v0.7**，65 → **68 行**；R29 扩充（扫码 `hostDeviceId` 动态前提 + `cuid` 派生字段风险）、**新增 R30**（短信 WebView 人机验证）、**新增 R31**（扫码 `hostDeviceId` 服务端接受度）；服务端风控类风险一律保持未关闭 |
-| `docs/TASKS.md` | 1231 → **1305 行**，67423 → **74831 B**；新增「T-006 补充收口（2026-11-29）」小节（四项补充结论 / 结论校正表 / 原 T-006 验收项复核 / 文档同步清单 / 未解决清单 / 边界），头部「最后更新」同步 |
+| `docs/TASKS.md` | 1231 → **1305 行**，67423 → **74831 B**；新增「T-006 补充收口（2026-11-28）」小节（四项补充结论 / 结论校正表 / 原 T-006 验收项复核 / 文档同步清单 / 未解决清单 / 边界），头部「最后更新」同步 |
 
 #### 关键事实（全部带 `文件:行号`，详见 deep-dive §15）
 

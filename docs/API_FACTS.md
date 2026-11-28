@@ -15,9 +15,9 @@
 
 ## 全局说明
 
-**当前状态（T-006 补充收口后）：9 个网盘的原生登录可行性已全部判定——可行 2 个（坚果云、百度）、需攻关 2 个（夸克、阿里）、未知 2 个（天翼、123）、不可行 3 个（蓝奏、UC、迅雷）。**
+**当前状态（T-006 补充收口 + 2026-11-28 一致性校正后）：9 个网盘的原生登录可行性已全部判定——可行 2 个（坚果云、百度）、需攻关 2 个（夸克、阿里）、未知 2 个（天翼、123）、不可行 3 个（蓝奏、UC、迅雷）。**
 
-> **百度一家的口径细化（2026-11-29）**：整体仍判「原生登录可行」，但**只有账号密码（A）与扫码（C）两条路径成立**；**短信验证码（B）单独降级为「需攻关」**，原因是发码前置人机验证是 `pass-machine.html` 的 WebView 页面，静态不可复刻且本项目禁用 WebView 登录。详见 `docs/evidence/baidu-login-deep-dive.md` §15.7。
+> **百度一家的口径细化（2026-11-28 校正）**：整体仍判「原生登录可行」，但**只有账号密码（A）与扫码（C）两条路径成立**；**短信验证码（B）单独为「需攻关」**。B 的理由**已改写**：人机验证 WebView 只承载条件触发的人机挑战、不承载凭据、不读 cookie、回传仅 `ds`/`tk`，**与坚果云 R27 同口径，不构成 AGENTS.md 第 9 条禁止的形态**；降级理由是「挑战通过条件静态不可复刻」+「是否接受内嵌同一 H5 尚未拍板」。详见 `docs/evidence/baidu-login-deep-dive.md` §16.5。
 
 > 变化说明：百度由「需攻关」改为「原生登录可行」，依据是 T-006 深度取证（`docs/evidence/baidu-login-deep-dive.md`）。**这不改写 T-005 的历史 No-Go 结论**，是否重跑 Go/No-Go 由用户决定。
 
@@ -87,7 +87,8 @@
 7. token 有效期：**未知**（客户端无过期时间字段）
 8. 依据：`docs/evidence/login-feasibility.md` §3.2（逐跳行号）；`docs/evidence/index-百度.md` §4
 9. 登录可行性结论：**原生登录可行（静态可行，动态未验证）**；**成立路径为 A 账号密码 与 C 扫码**
-   - 分路径（2026-11-29 补充收口后）：账号密码 **可独立实现** / 短信验证码 **需攻关** / 扫码 **可独立实现（带「服务端接受 `hostDeviceId` 缺席」这一动态前提）**（`docs/evidence/baidu-login-deep-dive.md` §15.7）
+   - 分路径（2026-11-28 校正后）：账号密码 **可独立实现（带与坚果云 R27 同级的条件性人机验证依赖）** / 短信验证码 **需攻关** / 扫码 **可独立实现（带「服务端接受 `hostDeviceId` 缺席」这一动态前提）**（`docs/evidence/baidu-login-deep-dive.md` §16.5.7）
+   - A 路径的人机验证分支：错误码 **50052** 时若 `ValidationServiceUtil.isAvailable()` 为假走整页网页登录，否则 `startValidation` 回调写回 `ds`/`tk` 并 `onAgainRequestPwdLogin` 重试原生登录（`NewLoginUtil.java:2107-2145`）；属**条件触发**，非每次必经
    - 为什么整体仍可行：存在 A、C 两条不含「静态不可复刻环节」的路径；B 不计入
    - 依据强度：路径均不依赖官方闭源 native（含 `libbaiduprotect_sec.so`，已闭环为仅服务人脸 WBAES）；但仍需动态验证服务端是否接受本项目构造的 `sig` / `di`
 10. 若需攻关：**T-006 后不再成立**——原 4 项攻关点已逐项处理（见下表），当前无阻断性攻关项。仅剩服务端行为类待动态验证（见第 12 项）。
@@ -103,12 +104,13 @@
     - 服务端是否接受本项目构造的 `sig`（MD5 字典序签名）与 `di`（AES 加密的 40 字段指纹）；
     - `diExceptIndex`（`sapi_options` 下发，`SapiOptions.java:62` 默认空）线上实际排除哪些索引；
     - `BAIDUID` cookie 是否必须非空（`ParamsUtil.java:81` 允许空串）；是否出现额外风控挑战（验证码 / 设备信任 / 异地登录）。
-    - ~~另注：「获取短信验证码」的接口本次未取证~~ **已于 2026-11-29 补充收口取证**：`POST {wap}/wp/api/login/sms`（前置 `POST https://passport.baidu.com/cap/init`，失败不阻断）。但**完整短信登录仍不能判可独立实现**，阻断点是发码触发人机验证时的 `pass-machine.html` WebView 页面（`ValidationActivity.java:319-321`、`:179`），其通过条件由服务端与页面 JS 决定。→ B 路径判「需攻关」。
+    - ~~另注：「获取短信验证码」的接口本次未取证~~ **已于 2026-11-28 补充收口取证**：`POST {wap}/wp/api/login/sms`（前置 `POST https://passport.baidu.com/cap/init`，失败不阻断）。但**完整短信登录仍不能判可独立实现**：发码与提交两段都有条件触发的人机挑战（`ValidationActivity.java:28-55`、`:317-323`），通过条件由服务端与页面 JS 决定，静态不可复刻。→ B 路径判「需攻关」。
+    - **新增待确认（2026-11-28）**：①`cuid` 的派生字段 `i()` 是否被服务端校验（`i()` 已确认进入 `di` 索引 38，见 deep-dive §16.2.5）②`t_cuid` 组合串结构 `"<cuid>|V<i(cuid)>"` 是否与服务端期望一致 ③真实 `zid` 需 native `libfire` 才能取到，兜底值（62 位常量 / 空串 / `"NoZidYet"`）是否被接受
     - 新增待动态验证：**服务端是否接受扫码请求中 `hostDeviceId` 缺席**（官方客户端恒传 `null`，`a.java:333-353` 丢弃空值参数）。
 
 > **修正 T-002d 的两处**：原写「扫码登录未发现独立实现」「换取接口路径未定位」，T-002c 已在 `QrCodeService.java` 定位到三步扫码客户端协议与 `wapLogin` 端点，两处作废。
 
-> **T-006 增补三条（2026-11-28）**：①签名基类 `HttpHashMap.doSign` 是**空方法**，真正签名在 `HttpHashMapWrap.java:9-15`（唯一调用点 `HttpClientWrap.java:87`），此前记在基类处属定位偏差；②扫码路径**不发 `di`、不带 cookie**（`QrCodeService.java` 全文 `getDeviceInfo` 0 命中，三处 `get(...)` 的 cookie 参数都传 `null`）；<br>　　**2026-11-29 更正**：原文「不加 `sig`」有误——三个扫码请求都经 `HttpClientWrap.buildParamDTO` → `doSign`（`HttpClientWrap.java:86-88` 是全仓唯一 `doSign` 调用点），**扫码是加 `sig` 的**；③账号密码路径的 `di` **不在 body**，只经 `ParamsUtil.buildNaCookie` 的 `DVIF` cookie 传递（`ParamsUtil.java:75-79`）。
+> **T-006 增补三条（2026-11-28）**：①签名基类 `HttpHashMap.doSign` 是**空方法**，真正签名在 `HttpHashMapWrap.java:9-15`（唯一调用点 `HttpClientWrap.java:87`），此前记在基类处属定位偏差；②扫码路径**不发 `di`、不带 cookie**（`QrCodeService.java` 全文 `getDeviceInfo` 0 命中，三处 `get(...)` 的 cookie 参数都传 `null`）；<br>　　**2026-11-28 更正**：原文「不加 `sig`」有误——三个扫码请求都经 `HttpClientWrap.buildParamDTO` → `doSign`（`HttpClientWrap.java:86-88` 是全仓唯一 `doSign` 调用点），**扫码是加 `sig` 的**；③账号密码路径的 `di` **不在 body**，只经 `ParamsUtil.buildNaCookie` 的 `DVIF` cookie 传递（`ParamsUtil.java:75-79`）。
 > **Sdata 不影响登录**：`Sdata` 头只在自研网络栈加（`classes6/sources/com/baidu/netdisk/network/c.java:126` 等 3 处，且 `c.java:105-130` 条件是 `!isHttps && !whitelist`）；sapi2 链路（`com/baidu/pass/http/a.java`）只设 UA 与 Content-Type，在 `classes2`/`classes12` 的 sapi2 目录搜 `Sdata` → 0 命中。Sdata 签名实现仍是**确定缺口**（`hk/__.java:469-475` 纯转发 `Function2.invoke`，`.n0(Function2` 静态调用方 0 命中），但它**不属于登录链路**，本文不写成已还原。
 
 ### 待确认问题
@@ -120,8 +122,9 @@
 - 服务端是否接受 `Range`（客户端已在 `np0/d.java:21`、`np0/r.java:208`、`np0/s.java:139` 发送）？
 - ~~`app_id` 常量真实值？~~ **已关闭（T-006）**：`ew._.i = f` 在 `kd/______.java:38` 由常量类赋值（`f` = `:18`，8 位数字串），取值见 `reverse/baidu/`，本文不抄录
 - ~~是否存在验证码或风控挑战（风控 SDK 参与度）？~~ **部分关闭（T-006）**：6 个安全 native 库的加载入口与唯一调用点已全部定位，**均不经过三条登录路径**（见 `docs/evidence/baidu-login-deep-dive.md` §5）；但**服务端是否会因此发起风控挑战仍待动态验证**
-- **已关闭（2026-11-29）**：`libbaiduprotect_sec.so` / `libbaidusec*` 是否阻断登录 → 仅服务人脸 WBAES，A/B/C 均不触及（deep-dive §15.1）；扫码 `hostDeviceId` 生成规则 → 官方客户端从不赋值、恒 `null`（§15.3）
-- **新增待确认（2026-11-29）**：①服务端是否接受扫码请求 `hostDeviceId` 缺席 ②短信人机验证是否在新设备上必然触发
+- **已关闭（2026-11-28）**：`libbaiduprotect_sec.so` / `libbaidusec*` 是否阻断登录 → 仅服务人脸 WBAES，A/B/C 均不触及（deep-dive §15.1）；扫码 `hostDeviceId` 生成规则 → 官方客户端从不赋值、恒 `null`（§15.3）
+- **新增待确认（2026-11-28）**：①服务端是否接受扫码请求 `hostDeviceId` 缺席 ②人机验证（A 的 50052 / B 的发码与提交）是否在新设备上必然触发 ③`i()` 段与 `zid` 兜底值是否被服务端接受
+- **2026-11-28 字段口径校正**：`di` 索引 **38 = `t_cuid` ← `mTPLCuid`**、**39 = `t_appname` ← `mTPLAppName`**（`SapiDeviceInfo.java:53-54`、`:168-184`）；`sf_zid` 兜底常量为 **62 位**（非 56 位）。详见 deep-dive §16.1
 
 ### 已知线索
 
@@ -488,7 +491,7 @@
 
 | 网盘 | 静态反编译 | 主体技术栈 | 覆盖率 | 登录流程 12 字段 | 文件接口 | **登录可行性（T-002c）** |
 |---|---|---|---|---|---|---|
-| 百度网盘 | T-002d 已完成；**登录经 T-006 深度取证 + 2026-11-29 补充收口** | Java/Kotlin 主体 + Flutter 模块 | 100.0000%（63259/63259） | **已填满** | 静态线索（40+ 接口） | **原生登录可行**（A/C 两条路径；**B 短信单独为需攻关**） |
+| 百度网盘 | T-002d 已完成；**登录经 T-006 深度取证 + 2026-11-28 补充收口与一致性校正** | Java/Kotlin 主体 + Flutter 模块 | 100.0000%（63259/63259） | **已填满** | 静态线索（40+ 接口） | **原生登录可行**（A/C 两条路径；**B 短信单独为需攻关**） |
 | 天翼云盘 | T-002d 壳确认 | Flutter 主体 + 爱加密 | 不适用（dex 仅 3 类壳桩） | **已填满（12 项均为未知）** | 未知 | **未知（需动态分析）** |
 | 夸克网盘 | T-002c 定向反编译 classes7/10 | Flutter 承载文件业务；**登录在 Java 层** | 不适用（登录不在 Dart 侧） | **已填满** | 未知（Dart 侧） | **需攻关** |
 | 坚果云 | T-002b 已完成 | Java/Kotlin 主体（2 dex，无加固） | 100.0%（2752/2753） | **已填满** | 静态线索 | **原生登录可行**（静态可行，动态未验证） |
@@ -502,7 +505,7 @@
 > **夸克与阿里的登录实现不在 Dart 侧**——这一点修正了 T-002d 把四家统一记为「协议需动态分析」的写法。文件业务协议仍在 Dart/jsbridge 侧，T-002d 的结论对文件协议仍成立。
 > 4 个 Flutter 网盘中，天翼/123 的「未知」是技术栈决定的结果，不是本任务遗漏；夸克/阿里的「需攻关」是**已有证据证明依赖闭源 native**，不是资料不足。
 > 百度在 T-006 后由「需攻关」改为「原生登录可行」：三条登录路径均无闭源 native 依赖，剩余仅为服务端行为待动态验证。**这不改写 T-005 的历史 No-Go 结论。**
-> **2026-11-29 补充收口**：百度整体档位不变，但**分路径口径修正**——A 账号密码「可独立实现」、C 扫码「可独立实现（带动态前提）」、**B 短信验证码降级为「需攻关」**（发码前置人机验证是 `pass-machine.html` WebView 页面）。另外 `libbaiduprotect_sec.so` 已闭环为「仅服务人脸 WBAES」、扫码 `hostDeviceId` 已闭环为「官方客户端恒传 `null`」。详见 `docs/evidence/baidu-login-deep-dive.md` §15。
+> **2026-11-28 补充收口**：百度整体档位不变，但**分路径口径修正**——A 账号密码「可独立实现」、C 扫码「可独立实现（带动态前提）」、**B 短信验证码降级为「需攻关」**（发码前置人机验证是 `pass-machine.html` WebView 页面）。另外 `libbaiduprotect_sec.so` 已闭环为「仅服务人脸 WBAES」、扫码 `hostDeviceId` 已闭环为「官方客户端恒传 `null`」。详见 `docs/evidence/baidu-login-deep-dive.md` §15。
 
 ## 汇总：资料缺失说明
 
