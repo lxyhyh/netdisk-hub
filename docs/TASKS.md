@@ -1413,9 +1413,20 @@ A 可独立实现（带条件性人机验证依赖）/ B 需攻关（等用户�
 
 ### 完成情况（2026-11-28）
 
-- 静态自检：`cargo test --workspace --locked` 在宿主目标通过，12 个测试全绿
-- 绑定自检：本地生成 `netdiskhub_core.kt` 2985 行，`providerIds` / `NetdiskClient` / `Session` / `NetdiskException` / `RemotePath` / `quota` / `mkdir` / `stat` 全部命中；凭据字段 0 命中
-- 运行时（Kotlin 编译 + 打包 + 设备执行）由 GitHub Actions 证明，见 T-102 完成情况
+**本地自检**：`cargo test --workspace --locked` 在宿主目标通过，12 个测试全绿；本地生成 `netdiskhub_core.kt` 2989 行，`providerIds` / `NetdiskClient` / `Session` / `NetdiskException` / `RemotePath` / `quota` / `mkdir` / `stat` / `probeMagic` 全部命中，凭据字段 0 命中。
+
+**CI 证据**（GitHub Actions，`build` workflow run [46129615494](https://github.com/lxyhyh/netdisk-hub/actions/runs/46129615494)，commit `e6cbbbb`）：
+
+| 项 | 实测结果 |
+|---|---|
+| `Run Rust unit tests` | `running 12 tests` → `test result: ok. 12 passed; 0 failed` |
+| `Build debug APK` | `:app:assembleDebug` 成功（Kotlin 编译含生成的绑定） |
+| `Verify UniFFI Kotlin bindings` | `bindings = app/build/generated/kotlin/generateUniffiBindingsDebug/com/netdiskhub/core/netdiskhub_core.kt`，`size = 105856 bytes`，7 个通用符号全命中，无凭据字段、无 `val message` |
+| `Verify Kotlin bindings are compiled into the APK` | `OK: dex 含 com.netdiskhub.core 与 probeMagic` |
+| `Verify APK native libraries` | 严格清单通过（见 T-102 表） |
+| `Verify APK zipalign 16 KB page alignment` | `Verification successful` |
+
+**踩坑（已修，CI 首跑失败原因）**：`NetdiskError` 的文本字段原叫 `message`，UniFFI 把它生成为 `sealed class NetdiskException` 变体的同名属性，与 `kotlin.Throwable.message` 冲突 → `:app:compileDebugKotlin FAILED`，报 `Conflicting declarations: val message: String`（`netdiskhub_core.kt:2569`）。已统一改名 `detail`，并在三处加防护：`error.rs` 注释写明约定、CI 绑定检查新增「不得出现 val message 字段」断言、`ProviderProbe.kt` 对十类错误与三种认证输入做**无 else 的穷尽 when**。
 
 ---
 
@@ -1468,6 +1479,9 @@ A 可独立实现（带条件性人机验证依赖）/ B 需攻关（等用户�
 ### 完成情况（2026-11-28）
 
 - 本地 `cargo test --workspace --locked`：12 个测试全绿，其中 2 个是契约测试（Alpha / Beta 各一）
+- CI 实测（run [46129615494](https://github.com/lxyhyh/netdisk-hub/actions/runs/46129615494)）：`test mock_alpha::tests::satisfies_unified_contract ... ok` 与 `test mock_beta::tests::satisfies_unified_contract ... ok` 同一次运行内均通过，另有 `rejects_scan_login`（Beta 只）与 `virtual_root_is_independent`（两者）
+- APK 产物实测（下载 artifact 后核验，非只看日志）：`app-debug.apk` 30965609 B，sha256 `dbeeaa46bf8858f899499b71a065acfdd9c73f03c7d88dfa5faa6f9a75359124`；`aapt dump badging` 为 `package: name='com.netdiskhub.app' versionCode='1' versionName='0.1.0' compileSdkVersion='37'`、`sdkVersion:'31'`、`targetSdkVersion:'37'`
+- 原生库清单（`unzip -Z1` 实测 6 条，与 CI 严格断言一致）：`lib/arm64-v8a/{libandroidx.graphics.path.so, libjnidispatch.so, libnetdiskhub_core.so}`、`lib/x86_64/{同三项}`；两个 core 库的 `readelf -sW --dyn-syms` 均含 17 个 `uniffi_netdiskhub_core_*` 导出，含 `_fn_func_provider_ids`、`_fn_constructor_netdiskclient_new`、`_fn_method_netdiskclient_{connect,list,download,upload,remove,rename,mkdir,quota,stat}`，以及保留的 `netdiskhub_probe` 与 `_fn_func_probe_magic`
 - CI：`build.yml` 与 `rust.yml` 均新增 `cargo test --workspace --locked` 步骤；Android 构建、双 ABI 检查、UniFFI 绑定检查、APK 原生库检查全部保留
 - 踩坑记录：两个 Mock 的契约测试并行执行时会争用同名临时文件（`Os { code: 2, kind: NotFound }`），已改为按 Provider id 分文件
 

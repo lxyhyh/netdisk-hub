@@ -31,6 +31,9 @@
 - 本轮**不涉及**任何真实网盘请求、登录、签名、设备指纹；全部数据虚构（`example.test` 域名、`1300000000x` 手机号）
 - 未新增任何依赖：只用到已有的 `uniffi = "=0.32.2"`
 - 契约测试并行执行时曾争用同名临时文件（`Os { code: 2, kind: NotFound }`），已改为按 Provider id 分文件
+- **CI 实测**（`build` run [46129615494](https://github.com/lxyhyh/netdisk-hub/actions/runs/46129615494)，commit `e6cbbbb`）：`Run Rust unit tests` → `12 passed; 0 failed`；`Build debug APK` 成功；`Verify UniFFI Kotlin bindings` → 绑定 105856 B，7 个通用符号全命中、无凭据字段、无 `val message`；`Verify Kotlin bindings are compiled into the APK` → `OK: dex 含 com.netdiskhub.core 与 probeMagic`；APK 原生库 6 条严格清单通过（两 ABI 各 `libandroidx.graphics.path.so` / `libjnidispatch.so` / `libnetdiskhub_core.so`）；`zipalign` 16 KB `Verification successful`
+- APK 产物核验：`app-debug.apk` 30965609 B，sha256 `dbeeaa46bf8858f899499b71a065acfdd9c73f03c7d88dfa5faa6f9a75359124`，两个 ABI 的 core 库各含 17 个 `uniffi_netdiskhub_core_*` 导出
+- 失败修复记录：首跑 `:app:compileDebugKotlin` 报 `Conflicting declarations: val message: String`（`NetdiskError` 字段名与 `Throwable.message` 撞车），已把文本字段统一改名 `detail`，并在 CI 增加 `val message` 反查断言 + Kotlin 侧无 `else` 的穷尽 `when`
 - `docs/API_FACTS.md`、`docs/PROVIDERS.md`、百度深度分析、`docs/RISKS.md` **按本轮约束未改动**
 ### T-006 zid 的 native 依赖与二次查询收口（2026-11-28）
 
