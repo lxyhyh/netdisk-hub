@@ -318,6 +318,9 @@ jobs:
           echo "ANDROID_AVD_HOME = $AVD_HOME_DIR"
           "$AVDMANAGER" list avd
 
+      # 第 6 次跑（run 46141556294）卡住的地方：模拟器进程起来了，
+      # 但 600 秒内 adb 一直没看到设备。emulator 37.x 起 -gpu swiftshader_indirect
+      # 已不是受支持的写法，先按默认渲染启动，失败再退到 -gpu guest 重试一次。
       - name: Run Android instrumented tests on emulator
         timeout-minutes: 30
         run: |
@@ -327,67 +330,76 @@ jobs:
           mkdir -p /tmp/emu
           "$EMULATOR" -accel-check || true
           echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME"
-          # 启动之前先确认 emulator 自己看得见这个 AVD，避免又白等到超时
+          "$EMULATOR" -list-avds
           if ! "$EMULATOR" -list-avds | grep -qx netdiskhub-t003; then
             echo "::error::emulator -list-avds 里没有 netdiskhub-t003"
-            "$EMULATOR" -list-avds || true
             exit 1
           fi
-          "$EMULATOR" -avd netdiskhub-t003 \
-            -no-window -no-audio -no-boot-anim -no-snapshot \
-            -gpu swiftshader_indirect -accel on -camera-back none -camera-front none \
-            > /tmp/emu/emulator.log 2>&1 &
-          EMU_PID=$!
-          echo "emulator pid = $EMU_PID"
+          "$ADB" kill-server || true
           "$ADB" start-server
-          # wait-for-device 没有超时，模拟器一崩就会一直等到 job 超时（首跑就是这么挂的），
-          # 必须自己加超时并立刻把模拟器日志打出来。
-          if ! timeout 600 "$ADB" wait-for-device; then
-            echo "::error::600 秒内没有等到任何设备，模拟器可能没起来"
-            tail -n 200 /tmp/emu/emulator.log || true
-            exit 1
-          fi
-          # 只看 wait-for-device 会在 init 阶段就通过，必须再等 sys.boot_completed
           BOOTED=0
-          for i in $(seq 1 180); do
-            if ! kill -0 "$EMU_PID" 2>/dev/null; then
-              echo "::error::模拟器进程提前退出"
-              tail -n 200 /tmp/emu/emulator.log
-              exit 1
+          ATTEMPT=0
+          for GPU_MODE in auto guest; do
+            ATTEMPT=$((ATTEMPT + 1))
+            echo "==== 启动尝试 $ATTEMPT，gpu 模式 $GPU_MODE ===="
+            EXTRA_GPU=()
+            if [ "$GPU_MODE" != "auto" ]; then
+              EXTRA_GPU=(-gpu "$GPU_MODE")
             fi
-            if [ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
-              BOOTED=1
-              echo "boot completed after $i 次轮询"
+            "$EMULATOR" -avd netdiskhub-t003 \
+              -no-window -no-audio -no-boot-anim -no-snapshot \
+              "${EXTRA_GPU[@]}" -accel on -camera-back none -camera-front none \
+              -no-metrics -netdelay none -netspeed full \
+              > "/tmp/emu/emulator-$ATTEMPT.log" 2>&1 &
+            EMU_PID=$!
+            echo "emulator pid = $EMU_PID"
+            for i in $(seq 1 60); do
+              if [ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; then
+                BOOTED=1
+                echo "boot completed，第 $i 次轮询（约 $((i * 5)) 秒）"
+                break
+              fi
+              if ! kill -0 "$EMU_PID" 2>/dev/null; then
+                echo "模拟器进程提前退出（尝试 $ATTEMPT）"
+                break
+              fi
+              sleep 5
+            done
+            if [ "$BOOTED" -eq 1 ]; then
               break
             fi
+            echo "---- 尝试 $ATTEMPT 未完成启动，输出诊断 ----"
+            "$ADB" devices || true
+            tail -n 80 "/tmp/emu/emulator-$ATTEMPT.log" || true
+            kill "$EMU_PID" 2>/dev/null || true
+            wait "$EMU_PID" 2>/dev/null || true
+            "$ADB" kill-server || true
             sleep 5
+            "$ADB" start-server
           done
           if [ "$BOOTED" -ne 1 ]; then
-            echo "::error::模拟器 20 分钟内没有完成启动"
-            tail -n 200 /tmp/emu/emulator.log
+            echo "::error::两次尝试都没有等到 sys.boot_completed"
+            "$ADB" devices || true
             exit 1
           fi
+          echo "sdk = $("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
+          echo "abi = $("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
           "$ADB" shell input keyevent 82 || true
           "$ADB" shell settings put global window_animation_scale 0 || true
           "$ADB" shell settings put global transition_animation_scale 0 || true
           "$ADB" shell settings put global animator_duration_scale 0 || true
-          echo "sdk = $("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
-          echo "abi = $("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
           "$ADB" logcat -c || true
           set +e
-          # pipefail 已开：管道的退出码就是 gradle 的退出码，必须紧接着取值，
-          # 中间插任何命令都会把 $? 覆盖掉
+          # pipefail 已开：管道的退出码就是 gradle 的退出码，必须紧接着取值
           gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace 2>&1 | tee /tmp/emu/gradle-test.log
           TEST_RC=$?
           set -e
           "$ADB" logcat -d -v threadtime > /tmp/emu/logcat.txt || true
           "$ADB" shell pm list packages | grep netdiskhub || true
           mkdir -p app/build/emulator-artifacts
-          cp -f /tmp/emu/emulator.log /tmp/emu/gradle-test.log app/build/emulator-artifacts/ || true
-          cp -f /tmp/emu/logcat.txt app/build/emulator-artifacts/ || true
+          cp -f /tmp/emu/emulator-*.log /tmp/emu/gradle-test.log /tmp/emu/logcat.txt app/build/emulator-artifacts/ || true
           echo "connectedDebugAndroidTest exit code = $TEST_RC"
           exit "$TEST_RC"
-
       # 只「跑完不报错」不够：必须证明用例数、零失败、零跳过，
       # 且 T-003 十项与 T-103 十二项的用例名都出现在结果里。
       - name: Verify instrumented test results
