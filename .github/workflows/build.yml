@@ -236,9 +236,9 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libpulse0 libnss3 libx11-6 libxcomposite1 libxcursor1 libxi6 libxtst6 libxdamage1 libxrandr2 libglu1-mesa libgl1 libasound2t64 \
+            libpulse0 libnss3 libx11-6 libxcomposite1 libxcursor1 libxi6 libxtst6 libxdamage1 libxrandr2 libglu1-mesa libgl1 libgles2 libasound2t64 \
             || sudo apt-get install -y --no-install-recommends \
-              libpulse0 libnss3 libx11-6 libxcomposite1 libxcursor1 libxi6 libxtst6 libxdamage1 libxrandr2 libglu1-mesa libgl1 libasound2
+              libpulse0 libnss3 libx11-6 libxcomposite1 libxcursor1 libxi6 libxtst6 libxdamage1 libxrandr2 libglu1-mesa libgl1 libgles2 libasound2
 
       - name: Install emulator and x86_64 system image
         run: |
@@ -262,18 +262,21 @@ jobs:
           #     而是 dlopen 的，ldd 输出里干脆不出现（假阴性）。
           # 所以改用 ldconfig 查系统库是否真的存在于加载路径，再用 emulator -version
           # 的真实加载作为最终证明。
-          SYS_MISSING=0
-          for LIB in libpulse.so.0 libnss3.so libX11.so.6 libGL.so.1 libGLESv2.so.2; do
+          # libpulse.so.0 是首跑真正导致 qemu 起不来的那个库，缺了必须硬失败；
+          # 其余按「存在则记录、缺失只告警」，因为它们是 dlopen 的可选依赖，
+          # 是否真需要由下一步 emulator -version 的真实加载来定论。
+          if ! ldconfig -p | grep -q "libpulse.so.0"; then
+            echo "::error::系统缺少 libpulse.so.0，qemu-system-x86_64 无法加载"
+            exit 1
+          fi
+          echo "OK: libpulse.so.0 存在"
+          for LIB in libnss3.so libX11.so.6 libGL.so.1 libGLESv2.so.2 libEGL.so.1; do
             if ldconfig -p | grep -q "$LIB"; then
               echo "OK: $LIB 存在"
             else
-              echo "::error::系统缺少 $LIB"
-              SYS_MISSING=1
+              echo "::warning::系统未提供 $LIB（dlopen 可选依赖，交给 emulator -version 验证）"
             fi
           done
-          if [ "$SYS_MISSING" -ne 0 ]; then
-            exit 1
-          fi
           # 直接管道到 head 会让 emulator 收到 SIGPIPE，配合 pipefail 会误判失败，
           # 但也不能用 || true 掩盖真正的加载失败。
           if ! "$ANDROID_HOME/emulator/emulator" -version > /tmp/emu-version.txt 2>&1; then
