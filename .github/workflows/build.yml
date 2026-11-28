@@ -286,6 +286,11 @@ jobs:
           fi
           head -n 3 /tmp/emu-version.txt
 
+      # 第 5 次跑（run 46140280455）的真实故障：avdmanager 把 AVD 建到
+      # /home/runner/.config/.android/avd，而 emulator 只查 $HOME/.android/avd，
+      # 于是报 Unknown AVD name [netdiskhub-t003]，又白等了 10 分钟。
+      # 处理：建完后从文件系统里找出 netdiskhub-t003.ini，把它的目录写进
+      # $GITHUB_ENV 的 ANDROID_AVD_HOME，让后面的 emulator 用同一个根目录。
       - name: Create AVD
         run: |
           set -euo pipefail
@@ -294,8 +299,23 @@ jobs:
             AVDMANAGER="$(find "$ANDROID_HOME" -maxdepth 4 -type f -name avdmanager | head -n 1)"
           fi
           echo "avdmanager = $AVDMANAGER"
-          echo "no" | "$AVDMANAGER" create avd -n netdiskhub-t003 \
-            -k "system-images;android-37.0;google_apis;x86_64" --force
+          if ! printf 'no\n' | "$AVDMANAGER" create avd -n netdiskhub-t003 \
+              -k "system-images;android-37.0;google_apis;x86_64" --force > /tmp/avd-create.log 2>&1; then
+            echo "::error::avdmanager create avd 失败"
+            cat /tmp/avd-create.log
+            exit 1
+          fi
+          cat /tmp/avd-create.log
+          AVD_INI="$(find "$HOME" -maxdepth 6 -type f -name netdiskhub-t003.ini 2>/dev/null | head -n 1)"
+          if [ -z "$AVD_INI" ]; then
+            echo "::error::找不到 netdiskhub-t003.ini，AVD 没有真正创建"
+            find "$HOME" -maxdepth 6 -name '*.avd' -o -maxdepth 6 -name '*.ini' 2>/dev/null | head -20 || true
+            exit 1
+          fi
+          AVD_HOME_DIR="$(dirname "$AVD_INI")"
+          echo "ANDROID_AVD_HOME=$AVD_HOME_DIR" >> "$GITHUB_ENV"
+          echo "AVD ini = $AVD_INI"
+          echo "ANDROID_AVD_HOME = $AVD_HOME_DIR"
           "$AVDMANAGER" list avd
 
       - name: Run Android instrumented tests on emulator
@@ -306,6 +326,13 @@ jobs:
           ADB="$ANDROID_HOME/platform-tools/adb"
           mkdir -p /tmp/emu
           "$EMULATOR" -accel-check || true
+          echo "ANDROID_AVD_HOME=$ANDROID_AVD_HOME"
+          # 启动之前先确认 emulator 自己看得见这个 AVD，避免又白等到超时
+          if ! "$EMULATOR" -list-avds | grep -qx netdiskhub-t003; then
+            echo "::error::emulator -list-avds 里没有 netdiskhub-t003"
+            "$EMULATOR" -list-avds || true
+            exit 1
+          fi
           "$EMULATOR" -avd netdiskhub-t003 \
             -no-window -no-audio -no-boot-anim -no-snapshot \
             -gpu swiftshader_indirect -accel on -camera-back none -camera-front none \
